@@ -18,6 +18,7 @@ import {
   Radio,
   Settings,
   Shield,
+  ShoppingCart,
   User,
   UserCog,
   Users,
@@ -99,6 +100,7 @@ const navItems: NavItem[] = [
   { href: "/automations", label: "Automations", icon: Zap },
   { href: "/flows", label: "Flows", icon: Workflow, beta: true },
   { href: "/produits", label: "Produits", icon: Package },
+  { href: "/commandes", label: "Commandes", icon: ShoppingCart },
 ];
 
 const bottomNavItems = [
