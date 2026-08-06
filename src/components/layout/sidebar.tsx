@@ -103,10 +103,10 @@ const navItems: NavItem[] = [
   { href: "/automations", labelKey: "automations", icon: Zap },
   { href: "/flows", labelKey: "flows", icon: Workflow, beta: true },
   { href: "/agents", labelKey: "aiAgents", icon: Bot },
-  { href: "/produits", labelKey: "Produits", icon: Package },
-  { href: "/commandes", labelKey: "Commandes", icon: ShoppingCart },
-  { href: "/services", labelKey: "Services", icon: Sparkles },
-  { href: "/reservations", labelKey: "Réservations", icon: CalendarClock },
+  { href: "/produits", labelKey: "produits", icon: Package },
+  { href: "/commandes", labelKey: "commandes", icon: ShoppingCart },
+  { href: "/services", labelKey: "services", icon: Sparkles },
+  { href: "/reservations", labelKey: "reservations", icon: CalendarClock },
 ];
 
 const bottomNavItems = [
