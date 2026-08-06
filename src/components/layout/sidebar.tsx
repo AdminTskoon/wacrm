@@ -19,6 +19,8 @@ import {
   Settings,
   Shield,
   ShoppingCart,
+  Sparkles,
+  CalendarClock,
   User,
   UserCog,
   Users,
@@ -101,6 +103,8 @@ const navItems: NavItem[] = [
   { href: "/flows", label: "Flows", icon: Workflow, beta: true },
   { href: "/produits", label: "Produits", icon: Package },
   { href: "/commandes", label: "Commandes", icon: ShoppingCart },
+  { href: "/services", label: "Services", icon: Sparkles },
+  { href: "/reservations", label: "Réservations", icon: CalendarClock },
 ];
 
 const bottomNavItems = [
