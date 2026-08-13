@@ -60,6 +60,15 @@ interface WhatsAppMessage {
   }
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string }
+  order?: {
+    catalog_id: string
+    product_items: Array<{
+      product_retailer_id: string
+      quantity: number
+      item_price: number
+      currency: string
+    }>
+  }
 }
 
 interface WhatsAppWebhookEntry {
@@ -613,7 +622,7 @@ async function processMessage(
   }
 
   // Parse message content based on type
-  const { contentText, mediaUrl, mediaType, interactiveReplyId } =
+  const { contentText, mediaUrl, mediaType, mediaId, orderData, interactiveReplyId } =
     await parseMessageContent(message, accessToken)
 
   // Resolve swipe-reply context if present. A missing parent is fine —
@@ -648,7 +657,7 @@ async function processMessage(
   // allowed value so the INSERT doesn't fail with a constraint error.
   const ALLOWED_CONTENT_TYPES = new Set([
     'text', 'image', 'document', 'audio', 'video',
-    'location', 'template', 'interactive',
+    'location', 'template', 'interactive', 'order'
   ])
   const contentType = ALLOWED_CONTENT_TYPES.has(message.type)
     ? message.type
@@ -741,16 +750,16 @@ async function processMessage(
     message:
       interactiveReplyId
         ? {
-            kind: 'interactive_reply',
-            reply_id: interactiveReplyId,
-            reply_title: contentText ?? '',
-            meta_message_id: message.id,
-          }
+          kind: 'interactive_reply',
+          reply_id: interactiveReplyId,
+          reply_title: contentText ?? '',
+          meta_message_id: message.id,
+        }
         : {
-            kind: 'text',
-            text: contentText ?? message.text?.body ?? '',
-            meta_message_id: message.id,
-          },
+          kind: 'text',
+          text: contentText ?? message.text?.body ?? '',
+          meta_message_id: message.id,
+        },
     isFirstInboundMessage,
   })
   const flowConsumed = flowResult.consumed
@@ -804,6 +813,9 @@ async function processMessage(
       context: {
         message_text: inboundText,
         conversation_id: conversation.id,
+        content_type: contentType,
+        media_id: mediaId,
+        order_data: orderData,
         // Only set on interactive taps; drives the interactive_reply
         // trigger's exact-id match.
         interactive_reply_id: interactiveReplyId ?? undefined,
@@ -848,6 +860,8 @@ async function parseMessageContent(
   contentText: string | null
   mediaUrl: string | null
   mediaType: string | null
+  mediaId: string | null
+  orderData: Record<string, unknown> | null
   /**
    * For interactive button / list replies: the stable id of the tapped
    * option (whatever we put on the button when sending). Used by the
@@ -882,7 +896,9 @@ async function parseMessageContent(
     contentText: null,
     mediaUrl: null,
     mediaType: null,
+    mediaId: null,
     interactiveReplyId: null,
+    orderData: {},
   }
 
   switch (message.type) {
@@ -896,6 +912,7 @@ async function parseMessageContent(
           contentText: message.image.caption || null,
           mediaUrl: await verifyAndBuildUrl(message.image.id),
           mediaType: message.image.mime_type,
+          mediaId: message.image.id,
         }
       }
       return empty
@@ -907,6 +924,7 @@ async function parseMessageContent(
           contentText: message.video.caption || null,
           mediaUrl: await verifyAndBuildUrl(message.video.id),
           mediaType: message.video.mime_type,
+          mediaId: message.video.id,
         }
       }
       return empty
@@ -919,6 +937,7 @@ async function parseMessageContent(
             message.document.caption || message.document.filename || null,
           mediaUrl: await verifyAndBuildUrl(message.document.id),
           mediaType: message.document.mime_type,
+          mediaId: message.document.id,
         }
       }
       return empty
@@ -929,6 +948,7 @@ async function parseMessageContent(
           ...empty,
           mediaUrl: await verifyAndBuildUrl(message.audio.id),
           mediaType: message.audio.mime_type,
+          mediaId: message.audio.id,
         }
       }
       return empty
@@ -942,6 +962,7 @@ async function parseMessageContent(
           ...empty,
           mediaUrl: await verifyAndBuildUrl(message.sticker.id),
           mediaType: message.sticker.mime_type,
+          mediaId: message.sticker.id,
         }
       }
       return empty
@@ -977,6 +998,25 @@ async function parseMessageContent(
       }
       return { ...empty, contentText: '[Interactive reply]' }
     }
+
+    case 'order':
+      if (message.order) {
+        const items = message.order.product_items
+        return {
+          ...empty,
+          contentText: `Commande : ${items.length} article(s)`,
+          orderData: {
+            catalog_id: message.order.catalog_id,
+            items: items.map(item => ({
+              product_id: item.product_retailer_id,
+              quantity: item.quantity,
+              price: item.item_price,
+              currency: item.currency,
+            })),
+          },
+        }
+      }
+      return { ...empty, contentText: '[Commande vide]' }
 
     default:
       return {
