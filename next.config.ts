@@ -85,6 +85,7 @@ const nextConfig: NextConfig = {
    * has no effect on a production build.
    */
   allowedDevOrigins: [
+    "wacrm.tskoon.io",
     "*.ngrok-free.app",
     "*.ngrok.app",
     "*.ngrok.io",
@@ -92,27 +93,11 @@ const nextConfig: NextConfig = {
     "*.loca.lt",
     ...(process.env.ALLOWED_DEV_ORIGINS
       ? process.env.ALLOWED_DEV_ORIGINS.split(",")
-          .map((origin) => origin.trim())
-          .filter(Boolean)
+        .map((origin) => origin.trim())
+        .filter(Boolean)
       : []),
   ],
 
-  /**
-   * Standalone output for Docker.
-   *
-   * Produces `.next/standalone/` containing a minimal `server.js` plus
-   * only the node_modules actually reachable from the app (via
-   * dependency tracing), instead of requiring the full node_modules
-   * tree in the final image. The multi-stage Dockerfile's `runner`
-   * stage copies this directory and runs `node server.js` — without
-   * this flag, `.next/standalone` is never generated and that COPY
-   * step fails.
-   */
-  output: "standalone",
-
-  allowedDevOrigins: [
-    "wacrm.tskoon.io",
-  ],
   /**
    * Cache-Control policy.
    *
