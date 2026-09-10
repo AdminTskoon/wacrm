@@ -42,8 +42,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Tag,
-} from 'lucide-react'
-
+  Upload,
+} from 'lucide-react';
+import { ImportModal } from '@/components/produits/import-modal';
+import { GatedButton } from '@/components/ui/gated-button';
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -58,6 +60,7 @@ interface Produit {
   sale_price: number | null
   sale_price_starts_at: string | null
   sale_price_ends_at: string | null
+  [key: string]: any
 }
 
 interface ProduitFormData {
@@ -70,6 +73,7 @@ interface ProduitFormData {
   // Médias & URL
   url: string
   image_url: string
+  additional_image_urls: string
   videos: string          // JSON textarea
   // Prix
   price: string
@@ -107,6 +111,8 @@ interface ProduitFormData {
   // Tags & Attributs
   product_tags: string    // comma-separated → text[]
   attributes: string      // JSON textarea
+  for_sale: string
+  for_rent: string
 }
 
 const EMPTY_FORM: ProduitFormData = {
@@ -114,9 +120,10 @@ const EMPTY_FORM: ProduitFormData = {
   external_id: '',
   title: '',
   description: '',
-  status: '',
+  status: 'active',
   url: '',
   image_url: '',
+  additional_image_urls: '',
   videos: '',
   price: '',
   currency: '',
@@ -147,6 +154,8 @@ const EMPTY_FORM: ProduitFormData = {
   offer_disclaimer_url: '',
   product_tags: '',
   attributes: '',
+  for_sale: 'true',
+  for_rent: 'false',
 }
 
 const PAGE_SIZE = 25
@@ -217,7 +226,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 export default function ProduitsPage() {
   const supabase = createClient()
-  const { account } = useAuth()
+  const { account, canEditSettings } = useAuth()
 
   // Data
   const [produits, setProduits] = useState<Produit[]>([])
@@ -227,6 +236,7 @@ export default function ProduitsPage() {
   const [totalCount, setTotalCount] = useState(0)
 
   // Modal state
+  const [importOpen, setImportOpen] = useState(false);
   const [formOpen, setFormOpen] = useState(false)
   const [editingProduit, setEditingProduit] = useState<Produit | null>(null)
   const [formData, setFormData] = useState<ProduitFormData>(EMPTY_FORM)
@@ -239,14 +249,14 @@ export default function ProduitsPage() {
   // States pour le dropdown Google Product Category
   const [gpcLevel1Options, setGpcLevel1Options] = useState<string[]>([])
   const [gpcLevel2Options, setGpcLevel2Options] = useState<string[]>([])
-  const [gpcLevel3Options, setGpcLevel3Options] = useState<{label: string, full_path: string}[]>([])
+  const [gpcLevel3Options, setGpcLevel3Options] = useState<{ label: string, full_path: string }[]>([])
   const [gpcLevel1, setGpcLevel1] = useState('')
   const [gpcLevel2, setGpcLevel2] = useState('')
 
   // States pour le dropdown facebook Product Category
   const [fbpcLevel1Options, setFbpcLevel1Options] = useState<string[]>([])
   const [fbpcLevel2Options, setFbpcLevel2Options] = useState<string[]>([])
-  const [fbpcLevel3Options, setFbpcLevel3Options] = useState<{label: string, full_path: string}[]>([])
+  const [fbpcLevel3Options, setFbpcLevel3Options] = useState<{ label: string, full_path: string }[]>([])
   const [fbpcLevel1, setFbpcLevel1] = useState('')
   const [fbpcLevel2, setFbpcLevel2] = useState('')
 
@@ -262,7 +272,7 @@ export default function ProduitsPage() {
 
     let query = supabase
       .from('produits')
-      .select('id,title,availability,image_url,quantity,price,sale_price,sale_price_starts_at,sale_price_ends_at', { count: 'exact' })
+      .select('*', { count: 'exact' })
       .order('title', { ascending: true })
       .range(from, to)
 
@@ -291,120 +301,120 @@ export default function ProduitsPage() {
   }, [search])
 
   useEffect(() => {
-  async function fetchLevel1() {
-    const { data } = await supabase
-      .from('google_product_categories')
-      .select('level_1')
-      .not('level_1', 'is', null)
-      .order('level_1')
-    
-    const unique = [...new Set((data ?? []).map((d: any) => d.level_1))]
-    setGpcLevel1Options(unique)
-  }
-  fetchLevel1()
-}, [supabase])
+    async function fetchLevel1() {
+      const { data } = await supabase
+        .from('google_product_categories')
+        .select('level_1')
+        .not('level_1', 'is', null)
+        .order('level_1')
 
-useEffect(() => {
-  if (!gpcLevel1) return
-  async function fetchLevel2() {
-    const { data } = await supabase
-      .from('google_product_categories')
-      .select('level_2')
-      .eq('level_1', gpcLevel1)
-      .not('level_2', 'is', null)
-      .order('level_2')
-    
-    const unique = [...new Set((data ?? []).map((d: any) => d.level_2))]
-    setGpcLevel2Options(unique)
-    setGpcLevel2('')
-    setField('google_product_category', '')
-  }
-  fetchLevel2()
-}, [gpcLevel1, supabase])
+      const unique = [...new Set((data ?? []).map((d: any) => d.level_1))]
+      setGpcLevel1Options(unique)
+    }
+    fetchLevel1()
+  }, [supabase])
 
-useEffect(() => {
-  if (!gpcLevel1 || !gpcLevel2) return
-  async function fetchLevel3() {
-    const { data } = await supabase
-      .from('google_product_categories')
-      .select('level_3, full_path')
-      .eq('level_1', gpcLevel1)
-      .eq('level_2', gpcLevel2)
-      .not('level_3', 'is', null)
-      .order('level_3')
-    
-    const opts = (data ?? []).map((d: any) => ({
-      label: d.level_3,
-      full_path: d.full_path
-    }))
-    setGpcLevel3Options(opts)
-    // Si aucun niveau 3 → le niveau 2 est la valeur finale
-    if (opts.length === 0) {
-      setField('google_product_category', gpcLevel2)
-    } else {
+  useEffect(() => {
+    if (!gpcLevel1) return
+    async function fetchLevel2() {
+      const { data } = await supabase
+        .from('google_product_categories')
+        .select('level_2')
+        .eq('level_1', gpcLevel1)
+        .not('level_2', 'is', null)
+        .order('level_2')
+
+      const unique = [...new Set((data ?? []).map((d: any) => d.level_2))]
+      setGpcLevel2Options(unique)
+      setGpcLevel2('')
       setField('google_product_category', '')
     }
-  }
-  fetchLevel3()
-}, [gpcLevel1, gpcLevel2, supabase])
+    fetchLevel2()
+  }, [gpcLevel1, supabase])
 
-useEffect(() => {
-  async function fetchLevel1() {
-    const { data } = await supabase
-      .from('fb_product_categories')
-      .select('level_1')
-      .not('level_1', 'is', null)
-      .order('level_1')
-    
-    const unique = [...new Set((data ?? []).map((d: any) => d.level_1))]
-    setFbpcLevel1Options(unique)
-  }
-  fetchLevel1()
-}, [supabase])
+  useEffect(() => {
+    if (!gpcLevel1 || !gpcLevel2) return
+    async function fetchLevel3() {
+      const { data } = await supabase
+        .from('google_product_categories')
+        .select('level_3, full_path')
+        .eq('level_1', gpcLevel1)
+        .eq('level_2', gpcLevel2)
+        .not('level_3', 'is', null)
+        .order('level_3')
 
-useEffect(() => {
-  if (!fbpcLevel1) return
-  async function fetchLevel2() {
-    const { data } = await supabase
-      .from('fb_product_categories')
-      .select('level_2')
-      .eq('level_1', fbpcLevel1)
-      .not('level_2', 'is', null)
-      .order('level_2')
-    
-    const unique = [...new Set((data ?? []).map((d: any) => d.level_2))]
-    setFbpcLevel2Options(unique)
-    setFbpcLevel2('')
-    setField('fb_product_category', '')
-  }
-  fetchLevel2()
-}, [fbpcLevel1, supabase])
+      const opts = (data ?? []).map((d: any) => ({
+        label: d.level_3,
+        full_path: d.full_path
+      }))
+      setGpcLevel3Options(opts)
+      // Si aucun niveau 3 → le niveau 2 est la valeur finale
+      if (opts.length === 0) {
+        setField('google_product_category', gpcLevel2)
+      } else {
+        setField('google_product_category', '')
+      }
+    }
+    fetchLevel3()
+  }, [gpcLevel1, gpcLevel2, supabase])
 
-useEffect(() => {
-  if (!fbpcLevel1 || !fbpcLevel2) return
-  async function fetchLevel3() {
-    const { data } = await supabase
-      .from('fb_product_categories')
-      .select('level_3, full_path')
-      .eq('level_1', fbpcLevel1)
-      .eq('level_2', fbpcLevel2)
-      .not('level_3', 'is', null)
-      .order('level_3')
-    
-    const opts = (data ?? []).map((d: any) => ({
-      label: d.level_3,
-      full_path: d.full_path
-    }))
-    setFbpcLevel3Options(opts)
-    // Si aucun niveau 3 → le niveau 2 est la valeur finale
-    if (opts.length === 0) {
-      setField('fb_product_category', fbpcLevel2)
-    } else {
+  useEffect(() => {
+    async function fetchLevel1() {
+      const { data } = await supabase
+        .from('fb_product_categories')
+        .select('level_1')
+        .not('level_1', 'is', null)
+        .order('level_1')
+
+      const unique = [...new Set((data ?? []).map((d: any) => d.level_1))]
+      setFbpcLevel1Options(unique)
+    }
+    fetchLevel1()
+  }, [supabase])
+
+  useEffect(() => {
+    if (!fbpcLevel1) return
+    async function fetchLevel2() {
+      const { data } = await supabase
+        .from('fb_product_categories')
+        .select('level_2')
+        .eq('level_1', fbpcLevel1)
+        .not('level_2', 'is', null)
+        .order('level_2')
+
+      const unique = [...new Set((data ?? []).map((d: any) => d.level_2))]
+      setFbpcLevel2Options(unique)
+      setFbpcLevel2('')
       setField('fb_product_category', '')
     }
-  }
-  fetchLevel3()
-}, [fbpcLevel1, fbpcLevel2, supabase])
+    fetchLevel2()
+  }, [fbpcLevel1, supabase])
+
+  useEffect(() => {
+    if (!fbpcLevel1 || !fbpcLevel2) return
+    async function fetchLevel3() {
+      const { data } = await supabase
+        .from('fb_product_categories')
+        .select('level_3, full_path')
+        .eq('level_1', fbpcLevel1)
+        .eq('level_2', fbpcLevel2)
+        .not('level_3', 'is', null)
+        .order('level_3')
+
+      const opts = (data ?? []).map((d: any) => ({
+        label: d.level_3,
+        full_path: d.full_path
+      }))
+      setFbpcLevel3Options(opts)
+      // Si aucun niveau 3 → le niveau 2 est la valeur finale
+      if (opts.length === 0) {
+        setField('fb_product_category', fbpcLevel2)
+      } else {
+        setField('fb_product_category', '')
+      }
+    }
+    fetchLevel3()
+  }, [fbpcLevel1, fbpcLevel2, supabase])
 
   // -------------------------------------------------------------------
   // Short helper to update a single form field
@@ -428,12 +438,46 @@ useEffect(() => {
     // Only pre-fill the fields that come from the table query;
     // the rest stay empty and can be filled in freely.
     setFormData({
-      ...EMPTY_FORM,
+      vertical: produit.vertical ?? '',
+      external_id: produit.external_id ?? '',
       title: produit.title ?? '',
-      availability: produit.availability ?? '',
+      description: produit.description ?? '',
+      status: produit.status ?? 'active',
+      url: produit.url ?? '',
       image_url: produit.image_url ?? '',
-      quantity: produit.quantity != null ? String(produit.quantity) : '',
+      additional_image_urls: Array.isArray(produit.additional_image_urls) ? produit.additional_image_urls.join(', ') : (produit.additional_image_urls ?? ''),
+      videos: typeof produit.videos === 'string' ? produit.videos : produit.videos ? JSON.stringify(produit.videos, null, 2) : '',
+      price: produit.price != null ? String(produit.price) : '',
+      currency: produit.currency ?? '',
       sale_price: produit.sale_price != null ? String(produit.sale_price) : '',
+      sale_price_starts_at: produit.sale_price_starts_at ? new Date(produit.sale_price_starts_at).toISOString().slice(0, 16) : '',
+      sale_price_ends_at: produit.sale_price_ends_at ? new Date(produit.sale_price_ends_at).toISOString().slice(0, 16) : '',
+      rental_price: produit.rental_price != null ? String(produit.rental_price) : '',
+      booking_mode: produit.booking_mode ?? '',
+      quantity: produit.quantity != null ? String(produit.quantity) : '',
+      availability: produit.availability ?? '',
+      condition: produit.condition ?? '',
+      brand: produit.brand ?? '',
+      gtin: produit.gtin ?? '',
+      google_product_category: produit.google_product_category ?? '',
+      fb_product_category: produit.fb_product_category ?? '',
+      item_group_id: produit.item_group_id ?? '',
+      gender: produit.gender ?? '',
+      color: produit.color ?? '',
+      size: produit.size ?? '',
+      age_group: produit.age_group ?? '',
+      material: produit.material ?? '',
+      pattern: produit.pattern ?? '',
+      style: Array.isArray(produit.style) ? produit.style.join(', ') : (produit.style ?? ''),
+      shipping: typeof produit.shipping === 'string' ? produit.shipping : produit.shipping ? JSON.stringify(produit.shipping, null, 2) : '',
+      shipping_weight_value: produit.shipping_weight_value != null ? String(produit.shipping_weight_value) : '',
+      shipping_weight_unit: produit.shipping_weight_unit ?? '',
+      offer_disclaimer: produit.offer_disclaimer ?? '',
+      offer_disclaimer_url: produit.offer_disclaimer_url ?? '',
+      product_tags: Array.isArray(produit.product_tags) ? produit.product_tags.join(', ') : (produit.product_tags ?? ''),
+      attributes: typeof produit.attributes === 'string' ? produit.attributes : produit.attributes ? JSON.stringify(produit.attributes, null, 2) : '',
+      for_sale: produit.for_sale ? 'true' : 'false',
+      for_rent: produit.for_rent ? 'true' : 'false',
     })
     setFormOpen(true)
   }
@@ -441,6 +485,11 @@ useEffect(() => {
   async function handleSave() {
     if (!formData.title.trim()) {
       toast.error('Le titre du produit est requis')
+      return
+    }
+
+    if (!formData.brand.trim() && !formData.gtin.trim()) {
+      toast.error('La marque ou le GTIN est requis')
       return
     }
 
@@ -464,26 +513,28 @@ useEffect(() => {
     // Array fields
     const product_tags = parseTags(formData.product_tags)
     const style = parseTags(formData.style)
+    const additional_image_urls = parseTags(formData.additional_image_urls)
 
     setSaving(true)
 
     const payload = {
       // Infos générales
-      vertical: formData.vertical.trim() || null,
-      external_id: formData.external_id.trim() || null,
+      vertical: formData.vertical.trim() || 'default',
+      external_id: formData.external_id.trim() || `ext-${Date.now()}`,
       title: formData.title.trim(),
-      description: formData.description.trim() || null,
-      status: formData.status.trim() || null,
+      description: formData.description.trim() || '',
+      status: formData.status.trim() || 'active',
       // Fixed values
-      for_sale: true,
-      for_rent: false,
+      for_sale: formData.for_sale === 'true',
+      for_rent: formData.for_rent === 'true',
       // Médias & URL
       url: formData.url.trim() || null,
       image_url: formData.image_url.trim() || null,
-      videos,
+      additional_image_urls: additional_image_urls || [],
+      videos: videos || [],
       // Prix
-      price,
-      currency: formData.currency.trim() || null,
+      price: price || 0,
+      currency: formData.currency.trim() || 'EUR',
       sale_price,
       sale_price_starts_at: formData.sale_price_starts_at || null,
       sale_price_ends_at: formData.sale_price_ends_at || null,
@@ -492,7 +543,7 @@ useEffect(() => {
       // Inventaire
       quantity: normalizedInventory.quantity,
       availability: resolvedAvailability,
-      condition: formData.condition.trim() || null,
+      condition: formData.condition.trim() || 'new',
       // Identifiants
       brand: formData.brand.trim() || null,
       gtin: formData.gtin.trim() || null,
@@ -506,7 +557,7 @@ useEffect(() => {
       age_group: formData.age_group.trim() || null,
       material: formData.material.trim() || null,
       pattern: formData.pattern.trim() || null,
-      style,
+      style: style || [],
       // Livraison
       shipping,
       shipping_weight_value,
@@ -515,8 +566,10 @@ useEffect(() => {
       offer_disclaimer: formData.offer_disclaimer.trim() || null,
       offer_disclaimer_url: formData.offer_disclaimer_url.trim() || null,
       // Tags & Attributs
-      product_tags,
-      attributes,
+      product_tags: product_tags || [],
+      attributes: attributes || {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     }
 
     if (editingProduit) {
@@ -527,7 +580,7 @@ useEffect(() => {
 
       if (error) {
         console.error('Update error:', error)
-        toast.error('Erreur lors de la modification')
+        toast.error('Erreur lors de la modification: ' + error.message)
       } else {
         toast.success('Produit modifié avec succès')
         setFormOpen(false)
@@ -545,7 +598,7 @@ useEffect(() => {
 
       if (error) {
         console.error('Insert error:', error)
-        toast.error('Erreur lors de la création')
+        toast.error('Erreur lors de la création: ' + error.message)
       } else {
         toast.success('Produit créé avec succès')
         setFormOpen(false)
@@ -599,11 +652,29 @@ useEffect(() => {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Produits</h1>
         </div>
-        <Button onClick={openCreateModal} className="gap-2">
-          <Plus className="h-4 w-4" />
-          Nouveau produit
-        </Button>
+        <div className="flex gap-2">
+          <GatedButton
+            variant="outline"
+            canAct={canEditSettings}
+            gateReason="import products"
+            onClick={() => setImportOpen(true)}
+            className="border-border text-muted-foreground hover:bg-muted"
+          >
+            <Upload className="size-4" />
+            Importer produits
+          </GatedButton>
+          <Button onClick={openCreateModal} className="gap-2">
+            <Plus className="h-4 w-4" />
+            Nouveau produit
+          </Button>
+        </div>
       </div>
+
+      <ImportModal
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImported={fetchProduits}
+      />
 
       {/* Search bar */}
       <div className="relative max-w-sm">
@@ -654,81 +725,81 @@ useEffect(() => {
                 const displayPrice = getCurrentDisplayPrice(p)
 
                 return (
-                <TableRow key={p.id}>
-                  {/* Image */}
-                  <TableCell>
-                    {p.image_url ? (
-                      <img
-                        src={p.image_url}
-                        alt={p.title ?? 'Produit'}
-                        className="h-10 w-10 rounded-md object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-10 w-10 items-center justify-center rounded-md bg-muted">
-                        <Package className="h-5 w-5 text-muted-foreground opacity-50" />
-                      </div>
-                    )}
-                  </TableCell>
-                  {/* Title */}
-                  <TableCell className="font-medium text-foreground">
-                    {p.title || '—'}
-                  </TableCell>
-                  {/* Availability */}
-                  <TableCell className="hidden sm:table-cell">
-                    <span
-                      className={
-                        effectiveAvailability === 'in stock'
-                          ? 'inline-flex items-center rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-400'
-                          : 'inline-flex items-center rounded-full bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-400'
-                      }
-                    >
-                      {effectiveAvailability}
-                    </span>
-                  </TableCell>
-                  {/* Quantity */}
-                  <TableCell className="text-right tabular-nums">
-                    {p.quantity != null ? p.quantity.toLocaleString('fr-FR') : '—'}
-                  </TableCell>
-                  {/* Current price */}
-                  <TableCell className="text-right tabular-nums">
-                    {displayPrice != null
-                      ? Number(displayPrice).toLocaleString('fr-FR', {
+                  <TableRow key={p.id}>
+                    {/* Image */}
+                    <TableCell>
+                      {p.image_url ? (
+                        <img
+                          src={p.image_url}
+                          alt={p.title ?? 'Produit'}
+                          className="h-10 w-10 rounded-md object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded-md bg-muted">
+                          <Package className="h-5 w-5 text-muted-foreground opacity-50" />
+                        </div>
+                      )}
+                    </TableCell>
+                    {/* Title */}
+                    <TableCell className="font-medium text-foreground">
+                      {p.title || '—'}
+                    </TableCell>
+                    {/* Availability */}
+                    <TableCell className="hidden sm:table-cell">
+                      <span
+                        className={
+                          effectiveAvailability === 'in stock'
+                            ? 'inline-flex items-center rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-400'
+                            : 'inline-flex items-center rounded-full bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-400'
+                        }
+                      >
+                        {effectiveAvailability}
+                      </span>
+                    </TableCell>
+                    {/* Quantity */}
+                    <TableCell className="text-right tabular-nums">
+                      {p.quantity != null ? p.quantity.toLocaleString('fr-FR') : '—'}
+                    </TableCell>
+                    {/* Current price */}
+                    <TableCell className="text-right tabular-nums">
+                      {displayPrice != null
+                        ? Number(displayPrice).toLocaleString('fr-FR', {
                           style: 'currency',
                           currency: 'EUR',
                           minimumFractionDigits: 2,
                         })
-                      : '—'}
-                  </TableCell>
-                  {/* Actions */}
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        render={
-                          <button
-                            type="button"
-                            className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                          />
-                        }
-                      >
-                        <MoreHorizontal className="h-4 w-4" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="min-w-36 bg-popover text-popover-foreground ring-border">
-                        <DropdownMenuItem onClick={() => openEditModal(p)}>
-                          <Pencil className="mr-2 h-4 w-4" />
-                          Modifier
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onClick={() => setDeleteTarget(p)}
-                          className="text-red-400 focus:text-red-400"
+                        : '—'}
+                    </TableCell>
+                    {/* Actions */}
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={
+                            <button
+                              type="button"
+                              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                            />
+                          }
                         >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Supprimer
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
+                          <MoreHorizontal className="h-4 w-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="min-w-36 bg-popover text-popover-foreground ring-border">
+                          <DropdownMenuItem onClick={() => openEditModal(p)}>
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Modifier
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => setDeleteTarget(p)}
+                            className="text-red-400 focus:text-red-400"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Supprimer
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
                 )
               })
             )}
@@ -809,7 +880,7 @@ useEffect(() => {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-vertical">Vertical</Label>
+                    <Label htmlFor="f-vertical">Vertical *</Label>
                     <Input
                       id="f-vertical"
                       placeholder="ex: fashion, electronics…"
@@ -818,7 +889,7 @@ useEffect(() => {
                     />
                   </div>
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-status">Statut</Label>
+                    <Label htmlFor="f-status">Statut *</Label>
                     <Input
                       id="f-status"
                       placeholder="ex: active, draft…"
@@ -827,8 +898,34 @@ useEffect(() => {
                     />
                   </div>
                 </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="f-for-sale">À vendre</Label>
+                    <select
+                      id="f-for-sale"
+                      value={formData.for_sale}
+                      onChange={(e) => setField('for_sale', e.target.value)}
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="true">Oui</option>
+                      <option value="false">Non</option>
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="f-for-rent">À louer</Label>
+                    <select
+                      id="f-for-rent"
+                      value={formData.for_rent}
+                      onChange={(e) => setField('for_rent', e.target.value)}
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="true">Oui</option>
+                      <option value="false">Non</option>
+                    </select>
+                  </div>
+                </div>
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="f-external-id">ID externe</Label>
+                  <Label htmlFor="f-external-id">ID externe *</Label>
                   <Input
                     id="f-external-id"
                     placeholder="Référence externe"
@@ -850,6 +947,17 @@ useEffect(() => {
                     placeholder="https://…"
                     value={formData.image_url}
                     onChange={(e) => setField('image_url', e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="f-additional-image-urls">
+                    Images additionnelles <span className="text-xs text-muted-foreground">(URLs séparées par des virgules)</span>
+                  </Label>
+                  <Input
+                    id="f-additional-image-urls"
+                    placeholder="https://img1, https://img2"
+                    value={formData.additional_image_urls}
+                    onChange={(e) => setField('additional_image_urls', e.target.value)}
                   />
                 </div>
                 <div className="flex flex-col gap-2">
@@ -897,12 +1005,15 @@ useEffect(() => {
                   </div>
                   <div className="flex flex-col gap-2">
                     <Label htmlFor="f-currency">Devise</Label>
-                    <Input
+                    <select
                       id="f-currency"
-                      placeholder="EUR, USD…"
                       value={formData.currency}
                       onChange={(e) => setField('currency', e.target.value)}
-                    />
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="EUR">EUR</option>
+                      <option value="USD">USD</option>
+                    </select>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -981,16 +1092,7 @@ useEffect(() => {
                     />
                   </div>
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-availability">Disponibilité</Label>
-                    <Input
-                      id="f-availability"
-                      placeholder="in stock / out of stock…"
-                      value={formData.availability}
-                      onChange={(e) => setField('availability', e.target.value)}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-condition">État</Label>
+                    <Label htmlFor="f-condition">Condition *</Label>
                     <Input
                       id="f-condition"
                       placeholder="new, used, refurbished…"
@@ -1005,7 +1107,7 @@ useEffect(() => {
 
               {/* ── Section 5 : Identifiants produit ── */}
               <section className="flex flex-col gap-3">
-                <SectionTitle>Identifiants produit</SectionTitle>
+                <SectionTitle>Identifiants produit (Marque ou GTIN requis)</SectionTitle>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-2">
                     <Label htmlFor="f-brand">Marque</Label>
@@ -1164,30 +1266,53 @@ useEffect(() => {
                 <div className="grid grid-cols-3 gap-4">
                   <div className="flex flex-col gap-2">
                     <Label htmlFor="f-gender">Genre</Label>
-                    <Input
+                    <select
                       id="f-gender"
-                      placeholder="male, female, unisex…"
                       value={formData.gender}
                       onChange={(e) => setField('gender', e.target.value)}
-                    />
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="" hidden></option>
+                      <option value="male">Homme (male)</option>
+                      <option value="female">Femme (female)</option>
+                      <option value="unisex">Unisexe (unisex)</option>
+                    </select>
                   </div>
                   <div className="flex flex-col gap-2">
                     <Label htmlFor="f-age-group">Groupe d'âge</Label>
-                    <Input
+                    <select
                       id="f-age-group"
-                      placeholder="adult, kids…"
                       value={formData.age_group}
                       onChange={(e) => setField('age_group', e.target.value)}
-                    />
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="" hidden></option>
+                      <option value="newborn">Nouveau-né (newborn)</option>
+                      <option value="infant">Nourrisson (infant)</option>
+                      <option value="toddler">Bambin (toddler)</option>
+                      <option value="kids">Enfant (kids)</option>
+                      <option value="adult">Adulte (adult)</option>
+                    </select>
                   </div>
                   <div className="flex flex-col gap-2">
                     <Label htmlFor="f-size">Taille</Label>
-                    <Input
+                    <select
                       id="f-size"
-                      placeholder="S, M, L, XL…"
                       value={formData.size}
                       onChange={(e) => setField('size', e.target.value)}
-                    />
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="" hidden></option>
+                      <option value="XXS">XXS</option>
+                      <option value="XS">XS</option>
+                      <option value="S">S</option>
+                      <option value="M">M</option>
+                      <option value="L">L</option>
+                      <option value="XL">XL</option>
+                      <option value="XXL">XXL</option>
+                      <option value="3XL">3XL</option>
+                      <option value="TU">Taille Unique</option>
+                    </select>
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-4">

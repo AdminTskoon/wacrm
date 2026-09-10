@@ -101,19 +101,27 @@ interface ContactOption {
   phone: string | null
 }
 
-interface OrderFormState {
-  contactName: string
+interface OrderLineItem {
+  id: string // identifiant temporaire côté client, pour la key React
   productId: string
   quantity: string
+}
+
+interface OrderFormState {
+  contactName: string
+  items: OrderLineItem[]
   status: string
   createdAt: string
 }
 
+function makeEmptyLineItem(): OrderLineItem {
+  return { id: crypto.randomUUID(), productId: '', quantity: '1' }
+}
+
 const EMPTY_ORDER_FORM: OrderFormState = {
   contactName: '',
-  productId: '',
-  quantity: '1',
-  status: 'pending',
+  items: [makeEmptyLineItem()],
+  status: 'received',
   createdAt: new Date().toISOString().slice(0, 16),
 }
 
@@ -363,12 +371,49 @@ export default function CommandesPage() {
     setEditingItem(item)
     setFormData({
       contactName: item.orders?.contact_name ?? '',
-      productId: item.produits?.title ? '' : '',
-      quantity: String(item.quantity ?? 1),
-      status: item.orders?.status ?? 'pending',
+      items: [
+        {
+          id: crypto.randomUUID(),
+          productId: '', // pas d'ID produit disponible depuis cette ligne agrégée
+          quantity: String(item.quantity ?? 1),
+        },
+      ],
+      status: item.orders?.status ?? 'received',
       createdAt: item.orders?.created_at ? new Date(item.orders.created_at).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16),
     })
     setFormOpen(true)
+  }
+
+  function addLineItem() {
+    setFormData((prev) => ({ ...prev, items: [...prev.items, makeEmptyLineItem()] }))
+  }
+
+  function removeLineItem(id: string) {
+    setFormData((prev) => ({
+      ...prev,
+      items: prev.items.length > 1 ? prev.items.filter((item) => item.id !== id) : prev.items,
+    }))
+  }
+
+  function updateLineItem(id: string, field: 'productId' | 'quantity', value: string) {
+    setFormData((prev) => ({
+      ...prev,
+      items: prev.items.map((item) => (item.id === id ? { ...item, [field]: value } : item)),
+    }))
+  }
+
+  function getUnitPrice(product: ProductOption, referenceDateIso: string) {
+    const active = isSalePriceActive(
+      {
+        title: product.title,
+        price: product.price,
+        sale_price: product.sale_price,
+        sale_price_starts_at: product.sale_price_starts_at,
+        sale_price_ends_at: product.sale_price_ends_at,
+      },
+      referenceDateIso
+    )
+    return active && product.sale_price != null ? product.sale_price : (product.price ?? 0)
   }
 
   async function handleSave() {
@@ -377,41 +422,71 @@ export default function CommandesPage() {
       return
     }
 
-    if (!formData.productId) {
-      toast.error('Veuillez sélectionner un produit')
+    const validItems = formData.items.filter((item) => item.productId)
+    if (validItems.length === 0) {
+      toast.error('Veuillez sélectionner au moins un produit')
       return
     }
 
-    const quantity = Number(formData.quantity)
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      toast.error('La quantité doit être supérieure à 0')
+    for (const item of validItems) {
+      const qty = Number(item.quantity)
+      if (!Number.isFinite(qty) || qty <= 0) {
+        toast.error('Chaque produit doit avoir une quantité supérieure à 0')
+        return
+      }
+    }
+
+    const selectedContact = contacts.find((c) => (c.name ?? '') === formData.contactName)
+    if (!selectedContact?.phone) {
+      toast.error('Veuillez sélectionner un contact avec un numéro de téléphone valide')
       return
+    }
+
+    const createdAt = formData.createdAt ? new Date(formData.createdAt).toISOString() : new Date().toISOString()
+
+    // Résoudre chaque ligne : produit + prix unitaire (avec promo éventuelle) + sous-total
+    const resolvedItems: { produit_id: string; quantity: number; item_price: number }[] = []
+    let total = 0
+
+    for (const item of validItems) {
+      const product = products.find((p) => p.id === item.productId)
+      if (!product) {
+        toast.error('Un des produits sélectionnés est introuvable')
+        return
+      }
+      const quantity = Number(item.quantity)
+      const unitPrice = getUnitPrice(product, createdAt)
+      total += unitPrice * quantity
+      resolvedItems.push({ produit_id: product.id, quantity, item_price: unitPrice })
     }
 
     setSaving(true)
 
     try {
-      const createdAt = formData.createdAt ? new Date(formData.createdAt).toISOString() : new Date().toISOString()
       const { data: orderData, error: orderError } = await supabase.from('orders').insert({
         account_id: account.id,
         contact_name: formData.contactName.trim() || null,
-        status: formData.status || 'pending',
+        contact_phone: selectedContact.phone,
+        status: formData.status || 'received',
         created_at: createdAt,
+        total,
       }).select('id').single()
 
       if (orderError || !orderData?.id) {
         throw orderError ?? new Error('Impossible de créer la commande')
       }
 
-      const { error: itemError } = await supabase.from('order_items').insert({
-        order_id: orderData.id,
-        produit_id: formData.productId,
-        quantity,
-        item_price: null,
-      })
+      const { error: itemsError } = await supabase.from('order_items').insert(
+        resolvedItems.map((item) => ({
+          order_id: orderData.id,
+          produit_id: item.produit_id,
+          quantity: item.quantity,
+          item_price: item.item_price,
+        }))
+      )
 
-      if (itemError) {
-        throw itemError
+      if (itemsError) {
+        throw itemsError
       }
 
       toast.success('Commande créée avec succès')
@@ -427,15 +502,28 @@ export default function CommandesPage() {
   }
 
   async function handleDelete() {
-    if (!deleteTarget) return
+    if (!deleteTarget || !account?.id) return
 
     setDeleting(true)
     try {
-      const { error: itemError } = await supabase.from('order_items').delete().eq('order_id', deleteTarget.order_id)
+      const { error: itemError, count: itemCount } = await supabase
+        .from('order_items')
+        .delete({ count: 'exact' })
+        .eq('order_id', deleteTarget.order_id)
+
       if (itemError) throw itemError
 
-      const { error: orderError } = await supabase.from('orders').delete().eq('id', deleteTarget.order_id)
+      const { error: orderError, count: orderCount } = await supabase
+        .from('orders')
+        .delete({ count: 'exact' })
+        .eq('id', deleteTarget.order_id)
+        .eq('account_id', account.id)
+
       if (orderError) throw orderError
+
+      if (!orderCount) {
+        throw new Error('Aucune commande supprimée — vérifiez les droits d\'accès (RLS)')
+      }
 
       toast.success('Commande supprimée')
       setDeleteTarget(null)
@@ -615,15 +703,15 @@ export default function CommandesPage() {
       </div>
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-md max-h-[90vh] flex flex-col p-0">
+          <DialogHeader className="px-6 pt-6">
             <DialogTitle>{editingItem ? 'Modifier la commande' : 'Nouvelle commande'}</DialogTitle>
             <DialogDescription>
               {editingItem ? 'Modifiez les détails de la commande.' : 'Créez une nouvelle commande avec un produit et une quantité.'}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
+          <div className="space-y-4 py-2 px-6 overflow-y-auto flex-1 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border/60 [&::-webkit-scrollbar-thumb]:rounded-full">
             <div className="space-y-2">
               <Label htmlFor="contact-name">Contact</Label>
               <div className="rounded-lg border border-input bg-muted/20 p-2">
@@ -650,34 +738,59 @@ export default function CommandesPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="product-id">Produit</Label>
-              <div className="rounded-lg border border-input bg-muted/20 p-2">
-                <select
-                  id="product-id"
-                  value={formData.productId}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, productId: e.target.value }))}
-                  className="w-full rounded-md bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="" hidden />
-                  {products.map((product) => (
-                    <option key={product.id} value={product.id}>
-                      {product.title || 'Produit sans nom'}
-                    </option>
-                  ))}
-                </select>
+              <div className="flex items-center justify-between">
+                <Label>Produits</Label>
+                <Button type="button" variant="outline" size="sm" onClick={addLineItem} className="h-7 gap-1 px-2">
+                  <Plus className="h-3.5 w-3.5" />
+                  Ajouter
+                </Button>
               </div>
-            </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="quantity">Quantité</Label>
-              <Input
-                id="quantity"
-                type="number"
-                min="1"
-                step="1"
-                value={formData.quantity}
-                onChange={(e) => setFormData((prev) => ({ ...prev, quantity: e.target.value }))}
-              />
+              <div className="space-y-3">
+                {formData.items.map((item, index) => (
+                  <div key={item.id} className="flex items-end gap-2 rounded-lg border border-input bg-muted/20 p-2">
+                    <div className="flex-1 space-y-1">
+                      {index === 0 && <Label htmlFor={`product-${item.id}`} className="text-xs text-muted-foreground">Produit</Label>}
+                      <select
+                        id={`product-${item.id}`}
+                        value={item.productId}
+                        onChange={(e) => updateLineItem(item.id, 'productId', e.target.value)}
+                        className="w-full rounded-md bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                      >
+                        <option value="" hidden />
+                        {products.map((product) => (
+                          <option key={product.id} value={product.id}>
+                            {product.title || 'Produit sans nom'}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="w-20 space-y-1">
+                      {index === 0 && <Label htmlFor={`qty-${item.id}`} className="text-xs text-muted-foreground">Qté</Label>}
+                      <Input
+                        id={`qty-${item.id}`}
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={item.quantity}
+                        onChange={(e) => updateLineItem(item.id, 'quantity', e.target.value)}
+                      />
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => removeLineItem(item.id)}
+                      disabled={formData.items.length === 1}
+                      className="mb-0.5 text-muted-foreground hover:text-red-400"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -688,8 +801,10 @@ export default function CommandesPage() {
                 onChange={(e) => setFormData((prev) => ({ ...prev, status: e.target.value }))}
                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
-                <option value="pending">En attente</option>
-                <option value="paid">Payée</option>
+                <option value="received">Reçue</option>
+                <option value="confirmed">Confirmée</option>
+                <option value="needs_review">À vérifier</option>
+                <option value="fulfilled">Traitée</option>
                 <option value="cancelled">Annulée</option>
               </select>
             </div>
@@ -705,7 +820,7 @@ export default function CommandesPage() {
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="px-6 pb-6 pt-2 border-t border-border">
             <Button variant="outline" onClick={() => setFormOpen(false)} disabled={saving}>
               Annuler
             </Button>

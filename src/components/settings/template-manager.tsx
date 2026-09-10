@@ -207,7 +207,7 @@ export function TemplateManager() {
 
   function buildSubmitPayload() {
     const sample_values: TemplateSampleValues = {};
-    if (form.body_samples.some((v) => v.trim())) {
+    if (form.body_samples.length > 0) {
       sample_values.body = form.body_samples.map((v) => v.trim());
     }
     if (form.header_format === 'text' && form.header_sample.trim()) {
