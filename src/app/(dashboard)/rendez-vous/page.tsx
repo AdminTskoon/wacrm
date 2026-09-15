@@ -420,10 +420,10 @@ export default function RendezVousPage() {
         status,
         attendee_name,
         attendee_phone,
+        raw_payload,
         contacts (name, phone)
       `)
       .eq('account_id', account.id)
-      .eq('bookable_item_source', 'service_bookings')
       .order('start_time', { ascending: true })
 
     if (error) {
@@ -461,21 +461,78 @@ export default function RendezVousPage() {
       }
     }
 
+    // Récupération des services pour les bookable_item_id directs (non trouvés dans service_bookings)
+    const nonSbItemIds = (bookingsData ?? [])
+      .map((b: any) => b.bookable_item_id)
+      .filter((id: any) => id && !sbMap.has(id))
+
+    let directServicesMap = new Map<string, any>()
+    if (nonSbItemIds.length > 0) {
+      const { data: directServices, error: directServicesError } = await supabase
+        .from('services')
+        .select('id, title')
+        .in('id', nonSbItemIds)
+
+      if (!directServicesError && directServices) {
+        directServicesMap = new Map(directServices.map((s: any) => [s.id, s]))
+      }
+    }
+
     const mapped: RdvItem[] = (bookingsData ?? []).map((r: any) => {
       const sb = sbMap.get(r.bookable_item_id)
+      const directService = directServicesMap.get(r.bookable_item_id)
+
+      let rawPayloadObj: any = null
+      if (r.raw_payload) {
+        if (typeof r.raw_payload === 'string') {
+          try {
+            rawPayloadObj = JSON.parse(r.raw_payload)
+          } catch {
+            rawPayloadObj = null
+          }
+        } else if (typeof r.raw_payload === 'object') {
+          rawPayloadObj = r.raw_payload
+        }
+      }
+
+      const rawTitle =
+        rawPayloadObj?.payload?.title ||
+        rawPayloadObj?.title ||
+        rawPayloadObj?.payload?.type ||
+        rawPayloadObj?.type ||
+        (typeof rawPayloadObj?.notes === 'string' ? rawPayloadObj.notes : null)
+
       const isProduit = !!sb?.produit_id
+      const itemTitle = isProduit
+        ? sb?.produits?.title ?? '—'
+        : sb?.services?.title ?? directService?.title ?? rawTitle ?? 'Rendez-vous'
+
+      const contactName =
+        r.contacts?.name ??
+        r.attendee_name ??
+        rawPayloadObj?.payload?.attendees?.[0]?.name ??
+        rawPayloadObj?.attendees?.[0]?.name ??
+        '—'
+
+      const contactPhone =
+        r.contacts?.phone ??
+        r.attendee_phone ??
+        rawPayloadObj?.payload?.attendees?.[0]?.phone ??
+        rawPayloadObj?.attendees?.[0]?.phone ??
+        ''
+
       return {
         id: r.id,
         contact_id: r.contact_id,
         start_time: r.start_time,
         end_time: r.end_time,
         status: r.status,
-        contact_name: r.contacts?.name ?? r.attendee_name ?? '—',
-        contact_phone: r.contacts?.phone ?? r.attendee_phone ?? '',
+        contact_name: contactName,
+        contact_phone: contactPhone,
         service_booking_id: sb?.id ?? null,
         booking_kind: isProduit ? 'produit' : 'service',
-        item_title: isProduit ? sb?.produits?.title ?? '—' : sb?.services?.title ?? '—',
-        service_id: sb?.service_id ?? null,
+        item_title: itemTitle,
+        service_id: sb?.service_id ?? directService?.id ?? null,
         produit_id: sb?.produit_id ?? null,
         time_slot: sb?.time_slot ?? null,
         booking_date: sb?.booking_date ?? null,
