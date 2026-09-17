@@ -43,9 +43,11 @@ import {
   ChevronRight,
   Tag,
   Upload,
+  ImageIcon,
 } from 'lucide-react';
 import { ImportModal } from '@/components/produits/import-modal';
 import { GatedButton } from '@/components/ui/gated-button';
+import { uploadAccountMedia } from '@/lib/storage/upload-media';
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -226,7 +228,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 export default function ProduitsPage() {
   const supabase = createClient()
-  const { account, canEditSettings } = useAuth()
+  const { account, canEditSettings, defaultCurrency } = useAuth()
 
   // Data
   const [produits, setProduits] = useState<Produit[]>([])
@@ -241,6 +243,8 @@ export default function ProduitsPage() {
   const [editingProduit, setEditingProduit] = useState<Produit | null>(null)
   const [formData, setFormData] = useState<ProduitFormData>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
+  const [uploadingImage, setUploadingImage] = useState(false)
+  const [uploadingUrl, setUploadingUrl] = useState(false)
 
   // Delete confirmation
   const [deleteTarget, setDeleteTarget] = useState<Produit | null>(null)
@@ -302,13 +306,17 @@ export default function ProduitsPage() {
 
   useEffect(() => {
     async function fetchLevel1() {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('google_product_categories')
         .select('level_1')
         .not('level_1', 'is', null)
         .order('level_1')
 
-      const unique = [...new Set((data ?? []).map((d: any) => d.level_1))]
+      if (error) {
+        console.error('Erreur chargement google_product_categories (niveau 1):', error)
+      }
+
+      const unique = [...new Set((data ?? []).map((d: any) => d.level_1).filter(Boolean))]
       setGpcLevel1Options(unique)
     }
     fetchLevel1()
@@ -317,17 +325,23 @@ export default function ProduitsPage() {
   useEffect(() => {
     if (!gpcLevel1) return
     async function fetchLevel2() {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('google_product_categories')
         .select('level_2')
         .eq('level_1', gpcLevel1)
         .not('level_2', 'is', null)
         .order('level_2')
 
-      const unique = [...new Set((data ?? []).map((d: any) => d.level_2))]
+      if (error) {
+        console.error('Erreur chargement google_product_categories (niveau 2):', error)
+      }
+
+      const unique = [...new Set((data ?? []).map((d: any) => d.level_2).filter(Boolean))]
       setGpcLevel2Options(unique)
       setGpcLevel2('')
-      setField('google_product_category', '')
+      if (unique.length === 0) {
+        setField('google_product_category', gpcLevel1)
+      }
     }
     fetchLevel2()
   }, [gpcLevel1, supabase])
@@ -335,7 +349,7 @@ export default function ProduitsPage() {
   useEffect(() => {
     if (!gpcLevel1 || !gpcLevel2) return
     async function fetchLevel3() {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('google_product_categories')
         .select('level_3, full_path')
         .eq('level_1', gpcLevel1)
@@ -343,16 +357,19 @@ export default function ProduitsPage() {
         .not('level_3', 'is', null)
         .order('level_3')
 
+      if (error) {
+        console.error('Erreur chargement google_product_categories (niveau 3):', error)
+      }
+
       const opts = (data ?? []).map((d: any) => ({
         label: d.level_3,
         full_path: d.full_path
       }))
       setGpcLevel3Options(opts)
-      // Si aucun niveau 3 → le niveau 2 est la valeur finale
+      // Si aucun niveau 3 → l'ensemble des valeurs est le chemin complet niveau 1 > niveau 2
       if (opts.length === 0) {
-        setField('google_product_category', gpcLevel2)
-      } else {
-        setField('google_product_category', '')
+        const fullVal = (data?.[0]?.full_path) || [gpcLevel1, gpcLevel2].filter(Boolean).join(' > ')
+        setField('google_product_category', fullVal)
       }
     }
     fetchLevel3()
@@ -360,13 +377,17 @@ export default function ProduitsPage() {
 
   useEffect(() => {
     async function fetchLevel1() {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('fb_product_categories')
         .select('level_1')
         .not('level_1', 'is', null)
         .order('level_1')
 
-      const unique = [...new Set((data ?? []).map((d: any) => d.level_1))]
+      if (error) {
+        console.error('Erreur chargement fb_product_categories (niveau 1):', error)
+      }
+
+      const unique = [...new Set((data ?? []).map((d: any) => d.level_1).filter(Boolean))]
       setFbpcLevel1Options(unique)
     }
     fetchLevel1()
@@ -375,17 +396,23 @@ export default function ProduitsPage() {
   useEffect(() => {
     if (!fbpcLevel1) return
     async function fetchLevel2() {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('fb_product_categories')
         .select('level_2')
         .eq('level_1', fbpcLevel1)
         .not('level_2', 'is', null)
         .order('level_2')
 
-      const unique = [...new Set((data ?? []).map((d: any) => d.level_2))]
+      if (error) {
+        console.error('Erreur chargement fb_product_categories (niveau 2):', error)
+      }
+
+      const unique = [...new Set((data ?? []).map((d: any) => d.level_2).filter(Boolean))]
       setFbpcLevel2Options(unique)
       setFbpcLevel2('')
-      setField('fb_product_category', '')
+      if (unique.length === 0) {
+        setField('fb_product_category', fbpcLevel1)
+      }
     }
     fetchLevel2()
   }, [fbpcLevel1, supabase])
@@ -393,7 +420,7 @@ export default function ProduitsPage() {
   useEffect(() => {
     if (!fbpcLevel1 || !fbpcLevel2) return
     async function fetchLevel3() {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('fb_product_categories')
         .select('level_3, full_path')
         .eq('level_1', fbpcLevel1)
@@ -401,16 +428,19 @@ export default function ProduitsPage() {
         .not('level_3', 'is', null)
         .order('level_3')
 
+      if (error) {
+        console.error('Erreur chargement fb_product_categories (niveau 3):', error)
+      }
+
       const opts = (data ?? []).map((d: any) => ({
         label: d.level_3,
         full_path: d.full_path
       }))
       setFbpcLevel3Options(opts)
-      // Si aucun niveau 3 → le niveau 2 est la valeur finale
+      // Si aucun niveau 3 → l'ensemble des valeurs est le chemin complet niveau 1 > niveau 2
       if (opts.length === 0) {
-        setField('fb_product_category', fbpcLevel2)
-      } else {
-        setField('fb_product_category', '')
+        const fullVal = (data?.[0]?.full_path) || [fbpcLevel1, fbpcLevel2].filter(Boolean).join(' > ')
+        setField('fb_product_category', fullVal)
       }
     }
     fetchLevel3()
@@ -429,7 +459,10 @@ export default function ProduitsPage() {
 
   function openCreateModal() {
     setEditingProduit(null)
-    setFormData(EMPTY_FORM)
+    setFormData({
+      ...EMPTY_FORM,
+      currency: defaultCurrency || account?.default_currency || 'USD',
+    })
     setFormOpen(true)
   }
 
@@ -448,7 +481,7 @@ export default function ProduitsPage() {
       additional_image_urls: Array.isArray(produit.additional_image_urls) ? produit.additional_image_urls.join(', ') : (produit.additional_image_urls ?? ''),
       videos: typeof produit.videos === 'string' ? produit.videos : produit.videos ? JSON.stringify(produit.videos, null, 2) : '',
       price: produit.price != null ? String(produit.price) : '',
-      currency: produit.currency ?? '',
+      currency: produit.currency || defaultCurrency || account?.default_currency || 'USD',
       sale_price: produit.sale_price != null ? String(produit.sale_price) : '',
       sale_price_starts_at: produit.sale_price_starts_at ? new Date(produit.sale_price_starts_at).toISOString().slice(0, 16) : '',
       sale_price_ends_at: produit.sale_price_ends_at ? new Date(produit.sale_price_ends_at).toISOString().slice(0, 16) : '',
@@ -482,15 +515,97 @@ export default function ProduitsPage() {
     setFormOpen(true)
   }
 
+  async function handleImageFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Veuillez sélectionner un fichier image valide')
+      return
+    }
+
+    setUploadingImage(true)
+    try {
+      const { publicUrl } = await uploadAccountMedia('chat-media', file)
+      setField('image_url', publicUrl)
+      toast.success('Photo téléversée avec succès')
+    } catch (err: any) {
+      console.error('Erreur upload photo:', err)
+      toast.error(err?.message || 'Erreur lors du téléversement de la photo')
+    } finally {
+      setUploadingImage(false)
+      e.target.value = ''
+    }
+  }
+
+  async function handleUrlFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Veuillez sélectionner un fichier image valide')
+      return
+    }
+
+    setUploadingUrl(true)
+    try {
+      const { publicUrl } = await uploadAccountMedia('chat-media', file)
+      setField('url', publicUrl)
+      toast.success('Image pour l\'URL produit téléversée avec succès')
+    } catch (err: any) {
+      console.error('Erreur upload fichier url:', err)
+      toast.error(err?.message || 'Erreur lors du téléversement du fichier')
+    } finally {
+      setUploadingUrl(false)
+      e.target.value = ''
+    }
+  }
+
   async function handleSave() {
     if (!formData.title.trim()) {
       toast.error('Le titre du produit est requis')
       return
     }
 
-    if (!formData.brand.trim() && !formData.gtin.trim()) {
-      toast.error('La marque ou le GTIN est requis')
+    if (!formData.description.trim()) {
+      toast.error('La description du produit est requise')
       return
+    }
+
+    if (!formData.vertical.trim()) {
+      toast.error('Le vertical du produit est requis')
+      return
+    }
+
+    if (!formData.external_id.trim()) {
+      toast.error("L'ID externe est requis")
+      return
+    }
+
+    if (!formData.price.trim()) {
+      toast.error('Le prix du produit est requis')
+      return
+    }
+
+    if (!formData.condition.trim()) {
+      toast.error('La condition du produit est requise')
+      return
+    }
+
+    if (!formData.brand.trim()) {
+      toast.error('La marque est requise')
+      return
+    }
+
+    if (formData.for_sale === 'true') {
+      if (!formData.image_url.trim()) {
+        toast.error("La photo / URL de l'image est requise lorsque le produit est à vendre")
+        return
+      }
+      if (!formData.url.trim()) {
+        toast.error("L'URL du produit est requise lorsque le produit est à vendre")
+        return
+      }
     }
 
     // Numeric conversions
@@ -534,7 +649,7 @@ export default function ProduitsPage() {
       videos: videos || [],
       // Prix
       price: price || 0,
-      currency: formData.currency.trim() || 'EUR',
+      currency: formData.currency?.trim() || defaultCurrency || account?.default_currency || 'USD',
       sale_price,
       sale_price_starts_at: formData.sale_price_starts_at || null,
       sale_price_ends_at: formData.sale_price_ends_at || null,
@@ -859,7 +974,9 @@ export default function ProduitsPage() {
               <section className="flex flex-col gap-3">
                 <SectionTitle>Informations générales</SectionTitle>
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="f-title">Titre *</Label>
+                  <Label htmlFor="f-title" className="flex items-center gap-1">
+                    Titre <span className="text-red-500 font-bold">*</span>
+                  </Label>
                   <Input
                     id="f-title"
                     placeholder="Titre du produit"
@@ -868,7 +985,9 @@ export default function ProduitsPage() {
                   />
                 </div>
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="f-description">Description</Label>
+                  <Label htmlFor="f-description" className="flex items-center gap-1">
+                    Description <span className="text-red-500 font-bold">*</span>
+                  </Label>
                   <textarea
                     id="f-description"
                     rows={3}
@@ -880,7 +999,9 @@ export default function ProduitsPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-vertical">Vertical *</Label>
+                    <Label htmlFor="f-vertical" className="flex items-center gap-1">
+                      Vertical <span className="text-red-500 font-bold">*</span>
+                    </Label>
                     <Input
                       id="f-vertical"
                       placeholder="ex: fashion, electronics…"
@@ -889,7 +1010,7 @@ export default function ProduitsPage() {
                     />
                   </div>
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-status">Statut *</Label>
+                    <Label htmlFor="f-status">Statut</Label>
                     <Input
                       id="f-status"
                       placeholder="ex: active, draft…"
@@ -900,7 +1021,9 @@ export default function ProduitsPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-for-sale">À vendre</Label>
+                    <Label htmlFor="f-for-sale" className="flex items-center gap-1">
+                      À vendre <span className="text-red-500 font-bold">*</span>
+                    </Label>
                     <select
                       id="f-for-sale"
                       value={formData.for_sale}
@@ -912,7 +1035,9 @@ export default function ProduitsPage() {
                     </select>
                   </div>
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-for-rent">À louer</Label>
+                    <Label htmlFor="f-for-rent" className="flex items-center gap-1">
+                      À louer <span className="text-red-500 font-bold">*</span>
+                    </Label>
                     <select
                       id="f-for-rent"
                       value={formData.for_rent}
@@ -925,7 +1050,9 @@ export default function ProduitsPage() {
                   </div>
                 </div>
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="f-external-id">ID externe *</Label>
+                  <Label htmlFor="f-external-id" className="flex items-center gap-1">
+                    ID externe <span className="text-red-500 font-bold">*</span>
+                  </Label>
                   <Input
                     id="f-external-id"
                     placeholder="Référence externe"
@@ -941,13 +1068,82 @@ export default function ProduitsPage() {
               <section className="flex flex-col gap-3">
                 <SectionTitle>Médias &amp; URL</SectionTitle>
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="f-image-url">URL de l'image</Label>
-                  <Input
-                    id="f-image-url"
-                    placeholder="https://…"
-                    value={formData.image_url}
-                    onChange={(e) => setField('image_url', e.target.value)}
-                  />
+                  <Label htmlFor="f-image-file" className="flex items-center gap-1">
+                    Photo du produit {formData.for_sale === 'true' && <span className="text-red-500 font-bold">*</span>}
+                  </Label>
+
+                  {/* Aperçu ou sélecteur de fichier */}
+                  {formData.image_url ? (
+                    <div className="flex items-center gap-3 p-3 rounded-lg border border-input bg-muted/20">
+                      <div className="relative h-16 w-16 rounded-md overflow-hidden border border-border bg-background shrink-0">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={formData.image_url}
+                          alt="Aperçu du produit"
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0 flex flex-col gap-1">
+                        <span className="text-xs text-muted-foreground truncate">{formData.image_url}</span>
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs font-medium text-primary hover:underline cursor-pointer">
+                            Changer la photo
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={handleImageFileUpload}
+                              disabled={uploadingImage}
+                            />
+                          </label>
+                          <span className="text-xs text-muted-foreground">•</span>
+                          <button
+                            type="button"
+                            onClick={() => setField('image_url', '')}
+                            className="text-xs font-medium text-red-500 hover:underline"
+                          >
+                            Supprimer
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <label className="flex flex-col items-center justify-center border-2 border-dashed border-input hover:border-primary/50 rounded-lg p-4 cursor-pointer bg-muted/10 hover:bg-muted/20 transition-colors">
+                        {uploadingImage ? (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                            <span>Téléversement de la photo…</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-1.5 text-center">
+                            <Upload className="h-6 w-6 text-muted-foreground" />
+                            <span className="text-sm font-medium text-foreground">
+                              Sélectionner une photo depuis un fichier
+                            </span>
+                            <span className="text-xs text-muted-foreground">PNG, JPG, WEBP jusqu'à 16 Mo</span>
+                          </div>
+                        )}
+                        <input
+                          id="f-image-file"
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handleImageFileUpload}
+                          disabled={uploadingImage}
+                        />
+                      </label>
+                      <div className="pt-1">
+                        <Input
+                          id="f-image-url"
+                          placeholder="Ou coller une URL d'image externe (https://…)"
+                          value={formData.image_url}
+                          onChange={(e) => setField('image_url', e.target.value)}
+                          className="text-xs h-8"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="f-additional-image-urls">
@@ -961,13 +1157,86 @@ export default function ProduitsPage() {
                   />
                 </div>
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="f-url">URL du produit</Label>
-                  <Input
-                    id="f-url"
-                    placeholder="https://…"
-                    value={formData.url}
-                    onChange={(e) => setField('url', e.target.value)}
-                  />
+                  <Label htmlFor="f-url-file" className="flex items-center gap-1">
+                    URL du produit {formData.for_sale === 'true' && <span className="text-red-500 font-bold">*</span>}
+                  </Label>
+
+                  {/* Aperçu ou sélecteur de fichier pour l'URL du produit */}
+                  {formData.url ? (
+                    <div className="flex items-center gap-3 p-3 rounded-lg border border-input bg-muted/20">
+                      <div className="relative h-16 w-16 rounded-md overflow-hidden border border-border bg-background shrink-0 flex items-center justify-center bg-muted/40">
+                        {formData.url.match(/\.(jpeg|jpg|gif|png|webp)($|\?)/i) ? (
+                          /* eslint-disable-next-line @next/next/no-img-element */
+                          <img
+                            src={formData.url}
+                            alt="Aperçu URL produit"
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <ImageIcon className="h-6 w-6 text-muted-foreground" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0 flex flex-col gap-1">
+                        <span className="text-xs text-muted-foreground truncate">{formData.url}</span>
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs font-medium text-primary hover:underline cursor-pointer">
+                            Changer le fichier
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={handleUrlFileUpload}
+                              disabled={uploadingUrl}
+                            />
+                          </label>
+                          <span className="text-xs text-muted-foreground">•</span>
+                          <button
+                            type="button"
+                            onClick={() => setField('url', '')}
+                            className="text-xs font-medium text-red-500 hover:underline"
+                          >
+                            Supprimer
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <label className="flex flex-col items-center justify-center border-2 border-dashed border-input hover:border-primary/50 rounded-lg p-4 cursor-pointer bg-muted/10 hover:bg-muted/20 transition-colors">
+                        {uploadingUrl ? (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                            <span>Téléversement en cours…</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-1.5 text-center">
+                            <Upload className="h-6 w-6 text-muted-foreground" />
+                            <span className="text-sm font-medium text-foreground">
+                              Sélectionner une image pour l'URL du produit
+                            </span>
+                            <span className="text-xs text-muted-foreground">PNG, JPG, WEBP jusqu'à 16 Mo</span>
+                          </div>
+                        )}
+                        <input
+                          id="f-url-file"
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handleUrlFileUpload}
+                          disabled={uploadingUrl}
+                        />
+                      </label>
+                      <div className="pt-1">
+                        <Input
+                          id="f-url"
+                          placeholder="Ou saisir une URL directe (https://…)"
+                          value={formData.url}
+                          onChange={(e) => setField('url', e.target.value)}
+                          className="text-xs h-8"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="f-videos">
@@ -990,31 +1259,19 @@ export default function ProduitsPage() {
               {/* ── Section 3 : Prix ── */}
               <section className="flex flex-col gap-3">
                 <SectionTitle>Prix</SectionTitle>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-price">Prix</Label>
-                    <Input
-                      id="f-price"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="0.00"
-                      value={formData.price}
-                      onChange={(e) => setField('price', e.target.value)}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-currency">Devise</Label>
-                    <select
-                      id="f-currency"
-                      value={formData.currency}
-                      onChange={(e) => setField('currency', e.target.value)}
-                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    >
-                      <option value="EUR">EUR</option>
-                      <option value="USD">USD</option>
-                    </select>
-                  </div>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="f-price" className="flex items-center gap-1">
+                    Prix ({defaultCurrency || account?.default_currency || 'USD'}) <span className="text-red-500 font-bold">*</span>
+                  </Label>
+                  <Input
+                    id="f-price"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={formData.price}
+                    onChange={(e) => setField('price', e.target.value)}
+                  />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-2">
@@ -1092,7 +1349,9 @@ export default function ProduitsPage() {
                     />
                   </div>
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-condition">Condition *</Label>
+                    <Label htmlFor="f-condition" className="flex items-center gap-1">
+                      Condition <span className="text-red-500 font-bold">*</span>
+                    </Label>
                     <Input
                       id="f-condition"
                       placeholder="new, used, refurbished…"
@@ -1107,10 +1366,12 @@ export default function ProduitsPage() {
 
               {/* ── Section 5 : Identifiants produit ── */}
               <section className="flex flex-col gap-3">
-                <SectionTitle>Identifiants produit (Marque ou GTIN requis)</SectionTitle>
+                <SectionTitle>Identifiants produit (Marque requise)</SectionTitle>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-brand">Marque</Label>
+                    <Label htmlFor="f-brand" className="flex items-center gap-1">
+                      Marque <span className="text-red-500 font-bold">*</span>
+                    </Label>
                     <Input
                       id="f-brand"
                       placeholder="Marque"
@@ -1130,15 +1391,29 @@ export default function ProduitsPage() {
                 </div>
                 {/* ── Catégorie Google ── */}
                 <div className="flex flex-col gap-2">
-                  <Label>Catégorie Google</Label>
+                  <div className="flex items-center justify-between">
+                    <Label>Catégorie Google</Label>
+                    {gpcLevel1Options.length === 0 && (
+                      <span className="text-xs text-amber-500">Table vide ou accès restreint par RLS</span>
+                    )}
+                  </div>
                   <div className="rounded-lg border border-input bg-muted/20 p-3 flex flex-col gap-2">
                     {/* Niveau 1 */}
                     <select
                       value={gpcLevel1}
-                      onChange={(e) => { setGpcLevel1(e.target.value); setGpcLevel2(''); setField('google_product_category', ''); }}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setGpcLevel1(val);
+                        setGpcLevel2('');
+                        setField('google_product_category', val);
+                      }}
                       className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     >
-                      <option value="" hidden />
+                      <option value="">
+                        {gpcLevel1Options.length > 0
+                          ? '-- Sélectionner une catégorie principale --'
+                          : '-- Aucune catégorie dans la table ou accès restreint --'}
+                      </option>
                       {gpcLevel1Options.map((opt) => (
                         <option key={opt} value={opt}>{opt}</option>
                       ))}
@@ -1149,10 +1424,18 @@ export default function ProduitsPage() {
                         <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                         <select
                           value={gpcLevel2}
-                          onChange={(e) => setGpcLevel2(e.target.value)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setGpcLevel2(val);
+                            if (val) {
+                              setField('google_product_category', [gpcLevel1, val].filter(Boolean).join(' > '));
+                            } else {
+                              setField('google_product_category', gpcLevel1);
+                            }
+                          }}
                           className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                         >
-                          <option value="" hidden />
+                          <option value="">-- Sélectionner une sous-catégorie --</option>
                           {gpcLevel2Options.map((opt) => (
                             <option key={opt} value={opt}>{opt}</option>
                           ))}
@@ -1166,18 +1449,32 @@ export default function ProduitsPage() {
                         <select
                           value={formData.google_product_category}
                           onChange={(e) => {
-                            const selected = gpcLevel3Options.find(opt => opt.full_path === e.target.value)
-                            setField('google_product_category', selected?.label ?? e.target.value)
+                            const val = e.target.value;
+                            const selected = gpcLevel3Options.find(opt => opt.full_path === val || opt.label === val);
+                            const fullVal = selected?.full_path?.trim() || [gpcLevel1, gpcLevel2, selected?.label ?? val].filter(Boolean).join(' > ');
+                            setField('google_product_category', fullVal);
                           }}
                           className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                         >
-                          <option value="" hidden />
-                          {gpcLevel3Options.map((opt) => (
-                            <option key={opt.full_path} value={opt.full_path}>{opt.label}</option>
-                          ))}
+                          <option value="">-- Sélectionner une catégorie finale --</option>
+                          {gpcLevel3Options.map((opt) => {
+                            const optVal = opt.full_path?.trim() || [gpcLevel1, gpcLevel2, opt.label].filter(Boolean).join(' > ');
+                            return (
+                              <option key={opt.full_path || opt.label} value={optVal}>{opt.label}</option>
+                            );
+                          })}
                         </select>
                       </div>
                     )}
+                    {/* Saisie manuelle si liste vide ou souhait de précision */}
+                    <div className="pt-1">
+                      <Input
+                        placeholder="Ou saisie libre : ex. Apparel & Accessories > Clothing"
+                        value={formData.google_product_category}
+                        onChange={(e) => setField('google_product_category', e.target.value)}
+                        className="text-xs h-8"
+                      />
+                    </div>
                     {/* Badge valeur finale */}
                     {formData.google_product_category && (
                       <div className="flex items-center gap-1.5 rounded-md bg-primary/10 px-2.5 py-1.5">
@@ -1190,15 +1487,29 @@ export default function ProduitsPage() {
 
                 {/* ── Catégorie Facebook ── */}
                 <div className="flex flex-col gap-2">
-                  <Label>Catégorie Facebook</Label>
+                  <div className="flex items-center justify-between">
+                    <Label>Catégorie Facebook</Label>
+                    {fbpcLevel1Options.length === 0 && (
+                      <span className="text-xs text-amber-500">Table vide ou accès restreint par RLS</span>
+                    )}
+                  </div>
                   <div className="rounded-lg border border-input bg-muted/20 p-3 flex flex-col gap-2">
                     {/* Niveau 1 */}
                     <select
                       value={fbpcLevel1}
-                      onChange={(e) => { setFbpcLevel1(e.target.value); setFbpcLevel2(''); setField('fb_product_category', ''); }}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFbpcLevel1(val);
+                        setFbpcLevel2('');
+                        setField('fb_product_category', val);
+                      }}
                       className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     >
-                      <option value="" hidden />
+                      <option value="">
+                        {fbpcLevel1Options.length > 0
+                          ? '-- Sélectionner une catégorie principale --'
+                          : '-- Aucune catégorie dans la table ou accès restreint --'}
+                      </option>
                       {fbpcLevel1Options.map((opt) => (
                         <option key={opt} value={opt}>{opt}</option>
                       ))}
@@ -1209,10 +1520,18 @@ export default function ProduitsPage() {
                         <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                         <select
                           value={fbpcLevel2}
-                          onChange={(e) => setFbpcLevel2(e.target.value)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFbpcLevel2(val);
+                            if (val) {
+                              setField('fb_product_category', [fbpcLevel1, val].filter(Boolean).join(' > '));
+                            } else {
+                              setField('fb_product_category', fbpcLevel1);
+                            }
+                          }}
                           className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                         >
-                          <option value="" hidden />
+                          <option value="">-- Sélectionner une sous-catégorie --</option>
                           {fbpcLevel2Options.map((opt) => (
                             <option key={opt} value={opt}>{opt}</option>
                           ))}
@@ -1226,18 +1545,32 @@ export default function ProduitsPage() {
                         <select
                           value={formData.fb_product_category}
                           onChange={(e) => {
-                            const selected = fbpcLevel3Options.find(opt => opt.full_path === e.target.value)
-                            setField('fb_product_category', selected?.label ?? e.target.value)
+                            const val = e.target.value;
+                            const selected = fbpcLevel3Options.find(opt => opt.full_path === val || opt.label === val);
+                            const fullVal = selected?.full_path?.trim() || [fbpcLevel1, fbpcLevel2, selected?.label ?? val].filter(Boolean).join(' > ');
+                            setField('fb_product_category', fullVal);
                           }}
                           className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                         >
-                          <option value="" hidden />
-                          {fbpcLevel3Options.map((opt) => (
-                            <option key={opt.full_path} value={opt.full_path}>{opt.label}</option>
-                          ))}
+                          <option value="">-- Sélectionner une catégorie finale --</option>
+                          {fbpcLevel3Options.map((opt) => {
+                            const optVal = opt.full_path?.trim() || [fbpcLevel1, fbpcLevel2, opt.label].filter(Boolean).join(' > ');
+                            return (
+                              <option key={opt.full_path || opt.label} value={optVal}>{opt.label}</option>
+                            );
+                          })}
                         </select>
                       </div>
                     )}
+                    {/* Saisie manuelle si liste vide ou souhait de précision */}
+                    <div className="pt-1">
+                      <Input
+                        placeholder="Ou saisie libre : ex. Vêtements et accessoires"
+                        value={formData.fb_product_category}
+                        onChange={(e) => setField('fb_product_category', e.target.value)}
+                        className="text-xs h-8"
+                      />
+                    </div>
                     {/* Badge valeur finale */}
                     {formData.fb_product_category && (
                       <div className="flex items-center gap-1.5 rounded-md bg-blue-500/10 px-2.5 py-1.5">

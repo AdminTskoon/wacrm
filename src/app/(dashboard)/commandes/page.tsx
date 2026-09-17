@@ -60,7 +60,7 @@ interface RawItem {
     sale_price_starts_at: string | null
     sale_price_ends_at: string | null
   } | null
-  orders: { contact_name: string | null; created_at: string | null; status: string | null } | null
+  orders: { contact_name: string | null; created_at: string | null; payment_status: string | null } | null
 }
 
 /** Flat display row after normalisation */
@@ -70,7 +70,7 @@ interface DisplayRow {
   products: string
   total: number
   created_at: string | null
-  status: string | null
+  payment_status: string | null
 }
 
 /** Orders grouped by order_id for rendering */
@@ -78,7 +78,7 @@ interface OrderGroup {
   order_id: string
   contact_name: string | null
   created_at: string | null
-  status: string | null
+  payment_status: string | null
   grand_total: number
   productSummary: string
   rows: DisplayRow[]
@@ -110,7 +110,7 @@ interface OrderLineItem {
 interface OrderFormState {
   contactName: string
   items: OrderLineItem[]
-  status: string
+  payment_status: string
   createdAt: string
 }
 
@@ -121,7 +121,7 @@ function makeEmptyLineItem(): OrderLineItem {
 const EMPTY_ORDER_FORM: OrderFormState = {
   contactName: '',
   items: [makeEmptyLineItem()],
-  status: 'received',
+  payment_status: 'pending',
   createdAt: new Date().toISOString().slice(0, 16),
 }
 
@@ -176,7 +176,7 @@ function groupByOrder(items: RawItem[]): OrderGroup[] {
         order_id: item.order_id,
         contact_name: item.orders?.contact_name ?? null,
         created_at: item.orders?.created_at ?? null,
-        status: item.orders?.status ?? null,
+        payment_status: item.orders?.payment_status ?? null,
         grand_total: 0,
         productSummary: '',
         rows: [],
@@ -200,7 +200,7 @@ function groupByOrder(items: RawItem[]): OrderGroup[] {
         products: group.productSummary,
         total: group.grand_total,
         created_at: group.created_at,
-        status: group.status,
+        payment_status: group.payment_status,
       },
     ],
   }))
@@ -228,19 +228,9 @@ function shortId(id: string) {
   return '…' + id.slice(-8)
 }
 
-function getStatusBadge(status: string | null) {
-  if (!status) return '—'
-  const s = status.toLowerCase()
-  if (s === 'pending' || s === 'en attente') {
-    return <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/20">{status}</Badge>
-  }
-  if (s === 'paid' || s === 'payé' || s === 'completed' || s === 'terminé') {
-    return <Badge variant="outline" className="bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20">{status}</Badge>
-  }
-  if (s === 'cancelled' || s === 'annulé' || s === 'failed') {
-    return <Badge variant="outline" className="bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20">{status}</Badge>
-  }
-  return <Badge variant="outline" className="text-foreground">{status}</Badge>
+function getPendingStatusBadge(payment_status: string | null) {
+  if (!payment_status) return '—'
+  return <Badge variant="outline" className="text-foreground">{payment_status}</Badge>
 }
 
 // ---------------------------------------------------------------------------
@@ -314,7 +304,7 @@ export default function CommandesPage() {
         item_price,
         quantity,
         produits ( title, price, sale_price, sale_price_starts_at, sale_price_ends_at ),
-        orders ( contact_name, created_at, status )
+        orders ( contact_name, created_at, payment_status )
       `)
       .in('order_id', ids)
       .order('order_id', { ascending: false })
@@ -378,7 +368,7 @@ export default function CommandesPage() {
           quantity: String(item.quantity ?? 1),
         },
       ],
-      status: item.orders?.status ?? 'received',
+      payment_status: item.orders?.payment_status ?? 'received',
       createdAt: item.orders?.created_at ? new Date(item.orders.created_at).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16),
     })
     setFormOpen(true)
@@ -467,7 +457,8 @@ export default function CommandesPage() {
         account_id: account.id,
         contact_name: formData.contactName.trim() || null,
         contact_phone: selectedContact.phone,
-        status: formData.status || 'received',
+        payment_status: formData.payment_status || 'pending',
+        status: 'confirmed',
         created_at: createdAt,
         total,
       }).select('id').single()
@@ -634,7 +625,7 @@ export default function CommandesPage() {
                     </TableCell>
 
                     <TableCell className="align-middle capitalize">
-                      {getStatusBadge(row.status)}
+                      {getPendingStatusBadge(row.payment_status)}
                     </TableCell>
 
                     <TableCell className="align-middle text-foreground font-medium">
@@ -654,12 +645,12 @@ export default function CommandesPage() {
                           <MoreHorizontal className="h-4 w-4" />
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="min-w-36 bg-popover text-popover-foreground ring-border">
-                          <DropdownMenuItem onClick={() => openEditModal({ id: row.order_id, order_id: row.order_id, item_price: 0, quantity: 1, produits: null, orders: { contact_name: row.contact_name, created_at: row.created_at, status: row.status } } as RawItem)}>
+                          <DropdownMenuItem onClick={() => openEditModal({ id: row.order_id, order_id: row.order_id, item_price: 0, quantity: 1, produits: null, orders: { contact_name: row.contact_name, created_at: row.created_at, payment_status: row.payment_status } } as RawItem)}>
                             <Pencil className="mr-2 h-4 w-4" />
                             Modifier
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => setDeleteTarget({ id: row.order_id, order_id: row.order_id, item_price: 0, quantity: 1, produits: null, orders: { contact_name: row.contact_name, created_at: row.created_at, status: row.status } } as RawItem)} className="text-red-400 focus:text-red-400">
+                          <DropdownMenuItem onClick={() => setDeleteTarget({ id: row.order_id, order_id: row.order_id, item_price: 0, quantity: 1, produits: null, orders: { contact_name: row.contact_name, created_at: row.created_at, payment_status: row.payment_status } } as RawItem)} className="text-red-400 focus:text-red-400">
                             <Trash2 className="mr-2 h-4 w-4" />
                             Supprimer
                           </DropdownMenuItem>
@@ -794,18 +785,15 @@ export default function CommandesPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="status">Statut</Label>
+              <Label htmlFor="payment_status">Statut du paiement</Label>
               <select
-                id="status"
-                value={formData.status}
-                onChange={(e) => setFormData((prev) => ({ ...prev, status: e.target.value }))}
+                id="payment_status"
+                value={formData.payment_status}
+                onChange={(e) => setFormData((prev) => ({ ...prev, payment_status: e.target.value }))}
                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
-                <option value="received">Reçue</option>
-                <option value="confirmed">Confirmée</option>
-                <option value="needs_review">À vérifier</option>
-                <option value="fulfilled">Traitée</option>
-                <option value="cancelled">Annulée</option>
+                <option value="pending">En attente</option>
+                <option value="paid">Payé</option>
               </select>
             </div>
 
