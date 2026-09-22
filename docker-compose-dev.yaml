@@ -7,4 +7,5 @@ services:
     volumes:
       - .:/app
     working_dir: /app
+    mem_limit: 2g
     command: "npm run dev"
