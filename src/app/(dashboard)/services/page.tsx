@@ -41,7 +41,6 @@ interface ServiceFormState {
   title: string
   description: string
   price: string
-  currency: string
   image_url: string
   attributes: string
   status: string
@@ -55,7 +54,6 @@ const EMPTY_FORM: ServiceFormState = {
   title: '',
   description: '',
   price: '',
-  currency: 'EUR',
   image_url: '',
   attributes: '',
   status: 'active',
@@ -129,7 +127,7 @@ function getUpdatePayloadForActivation(service: ServiceRecord, active: boolean) 
 
 export default function ServicesPage() {
   const supabase = createClient()
-  const { accountId } = useAuth()
+  const { accountId, defaultCurrency, account } = useAuth()
   const [services, setServices] = useState<ServiceRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [togglingId, setTogglingId] = useState<string | null>(null)
@@ -182,7 +180,6 @@ export default function ServicesPage() {
       title: service.title ?? '',
       description: service.description ?? '',
       price: service.price != null ? String(service.price) : '',
-      currency: service.currency ?? 'EUR',
       image_url: service.image_url ?? '',
       attributes: typeof service.attributes === 'string' ? service.attributes : service.attributes ? JSON.stringify(service.attributes, null, 2) : '',
       status: service.status ?? 'active',
@@ -226,7 +223,7 @@ export default function ServicesPage() {
         title: title || null,
         description: formData.description.trim() || null,
         price,
-        currency: formData.currency.trim() || 'EUR',
+        currency: defaultCurrency || account?.default_currency || 'EUR',
         image_url: formData.image_url.trim() || null,
         attributes: normalizeAttributes(formData.attributes),
         status: formData.status.trim() || 'active',
@@ -456,16 +453,6 @@ export default function ServicesPage() {
                 value={formData.price}
                 onChange={(event) => setFormData((current) => ({ ...current, price: event.target.value }))}
                 placeholder="0"
-              />
-            </div>
-
-            <div className="space-y-2 md:col-span-1">
-              <Label htmlFor="service-currency">Devise</Label>
-              <Input
-                id="service-currency"
-                value={formData.currency}
-                onChange={(event) => setFormData((current) => ({ ...current, currency: event.target.value }))}
-                placeholder="EUR"
               />
             </div>
 

@@ -136,7 +136,7 @@ const EMPTY_FORM: ProduitFormData = {
   booking_mode: '',
   quantity: '',
   availability: '',
-  condition: '',
+  condition: 'new',
   brand: '',
   gtin: '',
   google_product_category: '',
@@ -160,7 +160,7 @@ const EMPTY_FORM: ProduitFormData = {
   for_rent: 'false',
 }
 
-const PAGE_SIZE = 25
+const PAGE_SIZE = 15
 
 // ---------------------------------------------------------------------------
 // Helper — parse optional JSON textarea
@@ -489,7 +489,7 @@ export default function ProduitsPage() {
       booking_mode: produit.booking_mode ?? '',
       quantity: produit.quantity != null ? String(produit.quantity) : '',
       availability: produit.availability ?? '',
-      condition: produit.condition ?? '',
+      condition: produit.condition ?? 'new',
       brand: produit.brand ?? '',
       gtin: produit.gtin ?? '',
       google_product_category: produit.google_product_category ?? '',
@@ -587,15 +587,7 @@ export default function ProduitsPage() {
       return
     }
 
-    if (!formData.condition.trim()) {
-      toast.error('La condition du produit est requise')
-      return
-    }
 
-    if (!formData.brand.trim()) {
-      toast.error('La marque est requise')
-      return
-    }
 
     if (formData.for_sale === 'true') {
       if (!formData.image_url.trim()) {
@@ -880,7 +872,7 @@ export default function ProduitsPage() {
                       {displayPrice != null
                         ? Number(displayPrice).toLocaleString('fr-FR', {
                           style: 'currency',
-                          currency: 'EUR',
+                          currency: p.currency || defaultCurrency || account?.default_currency || 'USD',
                           minimumFractionDigits: 2,
                         })
                         : '—'}
@@ -1010,13 +1002,24 @@ export default function ProduitsPage() {
                     />
                   </div>
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-status">Statut</Label>
-                    <Input
+                    <Label>Statut <span className="text-red-500 font-bold">*</span></Label>
+                    <button
                       id="f-status"
-                      placeholder="ex: active, draft…"
-                      value={formData.status}
-                      onChange={(e) => setField('status', e.target.value)}
-                    />
+                      type="button"
+                      onClick={() => setField('status', formData.status === 'active' ? 'inactive' : 'active')}
+                      className={[
+                        'inline-flex items-center gap-2 self-start rounded-full px-4 py-1.5 text-sm font-semibold transition-colors border',
+                        formData.status === 'active'
+                          ? 'bg-primary/10 text-primary border-primary/20 hover:bg-primary/20'
+                          : 'bg-muted text-muted-foreground border-border hover:bg-muted/60',
+                      ].join(' ')}
+                    >
+                      <span className={[
+                        'inline-block h-2 w-2 rounded-full',
+                        formData.status === 'active' ? 'bg-primary' : 'bg-muted-foreground',
+                      ].join(' ')} />
+                      {formData.status === 'active' ? 'Actif' : 'Inactif'}
+                    </button>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -1366,12 +1369,10 @@ export default function ProduitsPage() {
 
               {/* ── Section 5 : Identifiants produit ── */}
               <section className="flex flex-col gap-3">
-                <SectionTitle>Identifiants produit (Marque requise)</SectionTitle>
+                <SectionTitle>Identifiants produit</SectionTitle>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-brand" className="flex items-center gap-1">
-                      Marque <span className="text-red-500 font-bold">*</span>
-                    </Label>
+                    <Label htmlFor="f-brand">Marque</Label>
                     <Input
                       id="f-brand"
                       placeholder="Marque"

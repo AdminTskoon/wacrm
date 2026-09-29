@@ -1499,6 +1499,7 @@
       "apiCredentialsDesc": "Meta WhatsApp 비즈니스 API 자격 증명을 입력하세요.",
       "phoneNumberId": "전화번호 ID",
       "wabaId": "WhatsApp 비즈니스 계정 ID",
+      "catalogId": "카탈로그 ID",
       "accessToken": "영구 액세스 토큰",
       "accessTokenPlaceholder": "액세스 토큰을 입력하세요",
       "tokenHidden": "보안을 위해 토큰이 숨겨져 있습니다. 설정을 업데이트하려면 다시 입력하세요.",

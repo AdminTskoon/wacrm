@@ -72,6 +72,7 @@ export function WhatsAppConfig() {
 
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [wabaId, setWabaId] = useState('');
+  const [catalogId, setCatalogId] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [verifyToken, setVerifyToken] = useState('');
   const [pin, setPin] = useState('');
@@ -134,6 +135,7 @@ export function WhatsAppConfig() {
         setConfig(data);
         setPhoneNumberId(data.phone_number_id || '');
         setWabaId(data.waba_id || '');
+        setCatalogId(data.catalog_id || '');
         setAccessToken(MASKED_TOKEN);
         setVerifyToken('');
         setPin('');
@@ -145,6 +147,7 @@ export function WhatsAppConfig() {
         setConfig(null);
         setPhoneNumberId('');
         setWabaId('');
+        setCatalogId('');
         setAccessToken('');
         setVerifyToken('');
         setPin('');
@@ -246,6 +249,7 @@ export function WhatsAppConfig() {
       const payload: Record<string, unknown> = {
         phone_number_id: phoneNumberId.trim(),
         waba_id: wabaId.trim() || null,
+        catalog_id: catalogId.trim() || null,
         verify_token: verifyToken.trim() || null,
         // Optional — only sent when the user filled it in. The server
         // requires it on first save or when changing numbers; for a
@@ -396,6 +400,7 @@ export function WhatsAppConfig() {
       setConfig(null);
       setPhoneNumberId('');
       setWabaId('');
+      setCatalogId('');
       setAccessToken('');
       setVerifyToken('');
       setTokenEdited(false);
@@ -623,6 +628,16 @@ export function WhatsAppConfig() {
                   placeholder="e.g. 100234567890456"
                   value={wabaId}
                   onChange={(e) => setWabaId(e.target.value)}
+                  className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">{t('catalogId')}</Label>
+                <Input
+                  placeholder="e.g. 100234567890789"
+                  value={catalogId}
+                  onChange={(e) => setCatalogId(e.target.value)}
                   className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                 />
               </div>

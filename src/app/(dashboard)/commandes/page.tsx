@@ -84,7 +84,7 @@ interface OrderGroup {
   rows: DisplayRow[]
 }
 
-const PAGE_SIZE = 50 // groups per page
+const PAGE_SIZE = 15 // groups per page
 
 interface ProductOption {
   id: string
