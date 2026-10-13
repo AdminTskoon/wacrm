@@ -347,6 +347,42 @@ describe("send_webhook — SSRF guard (GHSA-8jqh-598v-rfxc)", () => {
   });
 });
 
+describe("send_webhook — n8n shared secret", () => {
+  async function sentHeaders(url: string) {
+    const fetchSpy = vi.fn(async (_url: string, _init: RequestInit) => ({ ok: true, status: 202 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    h.state.owned = { id: "c1" };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [webhookStep(url)];
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: {},
+    });
+    vi.unstubAllGlobals();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    return fetchSpy.mock.calls[0][1].headers as Record<string, string>;
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("N8N_WEBHOOK_ORIGIN", "https://93.184.216.34");
+    vi.stubEnv("N8N_WEBHOOK_SECRET", "s3cret");
+  });
+
+  it("adds X-Webhook-Secret when the step targets the n8n origin", async () => {
+    const headers = await sentHeaders("https://93.184.216.34/webhook/whatsapp-inbound");
+    expect(headers["X-Webhook-Secret"]).toBe("s3cret");
+    vi.unstubAllEnvs();
+  });
+
+  it("never sends the secret to any other origin", async () => {
+    const headers = await sentHeaders("https://93.184.216.35/hook");
+    expect(headers["X-Webhook-Secret"]).toBeUndefined();
+    vi.unstubAllEnvs();
+  });
+});
+
 function webhookStep(url: string) {
   return {
     id: "s1",
