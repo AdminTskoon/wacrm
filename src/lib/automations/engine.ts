@@ -624,9 +624,13 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         throw new Error('send_webhook: destination not allowed')
       }
       const body = cfg.body_template ? interpolate(cfg.body_template, args) : JSON.stringify(args.context)
+      // Shared secret for n8n, sent only to that origin so a step pointed elsewhere can't capture it.
+      const { N8N_WEBHOOK_SECRET: secret, N8N_WEBHOOK_ORIGIN: n8nOrigin } = process.env
+      const n8nAuth: Record<string, string> =
+        secret && n8nOrigin && new URL(cfg.url).origin === n8nOrigin ? { 'X-Webhook-Secret': secret } : {}
       const res = await fetch(cfg.url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', ...(cfg.headers ?? {}) },
+        headers: { 'content-type': 'application/json', ...(cfg.headers ?? {}), ...n8nAuth },
         body,
         // Do NOT follow redirects — a public URL could 3xx-bounce to an
         // internal address, defeating the guard above. Bound the request
