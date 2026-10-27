@@ -66,7 +66,8 @@ interface RdvItem {
   time_slot: string | null
   booking_date: string | null
   end_date: string | null
-  raw_payload: any
+  cal_booking_uid: string | null
+  raw_payload: Record<string, unknown> | null
 }
 
 type StatusFilter = 'Toutes' | 'confirmed' | 'pending' | 'cancelled' | 'completed'
@@ -122,12 +123,12 @@ const EMPTY_RDV_FORM: RdvFormData = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function parseDurationInMinutes(val: any): number {
+function parseDurationInMinutes(val: unknown): number {
   if (!val) return 30
   if (typeof val === 'number') return val > 0 ? val : 30
   if (typeof val === 'object' && val !== null) {
     if ('duration' in val) {
-      return parseDurationInMinutes((val as any).duration)
+      return parseDurationInMinutes((val as { duration: unknown }).duration)
     }
   }
   if (typeof val === 'string') {
@@ -223,6 +224,23 @@ function statusConfig(status: RdvItem['status']) {
 }
 
 // Construit une literal daterange Postgres inclusive des deux bornes : '[start,end]'
+// Appelle /api/calcom/bookings et lève une erreur lisible si Cal.com refuse.
+async function calcomBookings(
+  method: 'POST' | 'PATCH' | 'DELETE',
+  body: Record<string, unknown>
+): Promise<{ booking?: { uid?: string } }> {
+  const res = await fetch('/api/calcom/bookings', {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok || !data?.ok) {
+    throw new Error(`Cal.com (${res.status}) : ${typeof data?.error === 'string' ? data.error : 'réponse invalide'}`)
+  }
+  return data
+}
+
 function toDateRangeLiteral(start: string, end: string) {
   return `[${start},${end}]`
 }
@@ -423,6 +441,7 @@ export default function RendezVousPage() {
         status,
         attendee_name,
         attendee_phone,
+        cal_booking_uid,
         raw_payload,
         contacts (name, phone)
       `)
@@ -437,9 +456,10 @@ export default function RendezVousPage() {
     }
 
     const sbIds = (bookingsData ?? [])
-      .map((b: any) => b.bookable_item_id)
+      .map((b) => b.bookable_item_id)
       .filter(Boolean)
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- lignes Supabase non typées (pas de types générés)
     let sbMap = new Map<string, any>()
     if (sbIds.length > 0) {
       const { data: sbData, error: sbError } = await supabase
@@ -460,15 +480,16 @@ export default function RendezVousPage() {
       if (sbError) {
         console.error('Failed to fetch service_bookings:', sbError)
       } else {
-        sbMap = new Map((sbData ?? []).map((sb: any) => [sb.id, sb]))
+        sbMap = new Map((sbData ?? []).map((sb) => [sb.id, sb]))
       }
     }
 
     // Récupération des services pour les bookable_item_id directs (non trouvés dans service_bookings)
     const nonSbItemIds = (bookingsData ?? [])
-      .map((b: any) => b.bookable_item_id)
-      .filter((id: any) => id && !sbMap.has(id))
+      .map((b) => b.bookable_item_id)
+      .filter((id) => id && !sbMap.has(id))
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- lignes Supabase non typées (pas de types générés)
     let directServicesMap = new Map<string, any>()
     if (nonSbItemIds.length > 0) {
       const { data: directServices, error: directServicesError } = await supabase
@@ -477,14 +498,17 @@ export default function RendezVousPage() {
         .in('id', nonSbItemIds)
 
       if (!directServicesError && directServices) {
-        directServicesMap = new Map(directServices.map((s: any) => [s.id, s]))
+        directServicesMap = new Map(directServices.map((s) => [s.id, s]))
       }
     }
 
+    // Jointure contacts : objet à l'exécution, typée tableau sans types Supabase générés
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mapped: RdvItem[] = (bookingsData ?? []).map((r: any) => {
       const sb = sbMap.get(r.bookable_item_id)
       const directService = directServicesMap.get(r.bookable_item_id)
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- payload Cal.com libre
       let rawPayloadObj: any = null
       if (r.raw_payload) {
         if (typeof r.raw_payload === 'string') {
@@ -529,7 +553,8 @@ export default function RendezVousPage() {
         contact_id: r.contact_id,
         start_time: r.start_time,
         end_time: r.end_time,
-        status: r.status,
+        // 'rescheduled' (posé par le webhook Cal.com) reste un RDV actif
+        status: r.status === 'rescheduled' ? 'confirmed' : r.status,
         contact_name: contactName,
         contact_phone: contactPhone,
         service_booking_id: sb?.id ?? null,
@@ -540,40 +565,17 @@ export default function RendezVousPage() {
         time_slot: sb?.time_slot ?? null,
         booking_date: sb?.booking_date ?? null,
         end_date: sb?.end_date ?? null,
+        // calcom_uid : RDV créés par l'ancienne version de cette page
+        cal_booking_uid: r.cal_booking_uid ?? rawPayloadObj?.calcom_uid ?? null,
         raw_payload: rawPayloadObj,
       }
     })
 
-    // Auto-complétion : confirmé + end_time dépassé -> completed
+    // « Terminé » est un état d'affichage : bookings_status_check n'accepte pas 'completed'
     const now = Date.now()
-    const toComplete = mapped.filter(
-      (r) => r.status === 'confirmed' && new Date(r.end_time).getTime() < now
-    )
-
-    if (toComplete.length > 0) {
-      const nowIso = new Date().toISOString()
-      const bookingIds = toComplete.map((r) => r.id)
-      const sbIdsToComplete = toComplete.map((r) => r.service_booking_id).filter(Boolean) as string[]
-
-      const { error: updateError } = await supabase
-        .from('bookings')
-        .update({ status: 'completed', updated_at: nowIso })
-        .in('id', bookingIds)
-
-      // Pas de mise à jour de service_bookings ici : 'completed' n'est pas une
-      // valeur autorisée par service_bookings_status_check (confirmed|cancelled
-      // uniquement) — le service_booking reste 'confirmed', seul bookings.status
-      // avance jusqu'à 'completed'.
-
-      if (updateError) {
-        console.error('Erreur mise à jour auto des statuts:', updateError)
-      } else {
-        const completedIds = new Set(bookingIds)
-        mapped.forEach((r) => {
-          if (completedIds.has(r.id)) r.status = 'completed'
-        })
-      }
-    }
+    mapped.forEach((r) => {
+      if (r.status === 'confirmed' && new Date(r.end_time).getTime() < now) r.status = 'completed'
+    })
 
     setRdvList(mapped)
     setLoading(false)
@@ -811,7 +813,7 @@ export default function RendezVousPage() {
           .eq('account_id', account.id)
           .eq('produit_id', formData.produit_id)
           .eq('status', 'confirmed') // service_bookings ne stocke jamais 'pending'
-          .overlaps('rental_period', rentalPeriodLiteral as any)
+          .overlaps('rental_period', rentalPeriodLiteral as string)
 
         if (editingRdv?.service_booking_id) {
           rangeQuery = rangeQuery.neq('id', editingRdv.service_booking_id)
@@ -831,38 +833,33 @@ export default function RendezVousPage() {
       // ---- 0. Création dans Cal.com (services liés à un événement Cal.com) ----
       if (!editingRdv && formData.booking_kind === 'service') {
         const selectedSvc = services.find((s) => s.id === formData.service_id)
-        console.log('[Cal.com RDV] service =', selectedSvc?.title, '| slug =', selectedSvc?.cal_event_slug)
         if (selectedSvc?.cal_event_slug) {
-          const calRes = await fetch('/api/calcom/bookings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              eventTypeSlug: selectedSvc.cal_event_slug,
-              username: selectedSvc.cal_username || undefined,
-              start: startTimeObj.toISOString(),
-              name: contact?.name ?? 'Client',
-              phone: contact?.phone ?? '',
-              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-            }),
+          const calData = await calcomBookings('POST', {
+            eventTypeSlug: selectedSvc.cal_event_slug,
+            username: selectedSvc.cal_username || undefined,
+            start: startTimeObj.toISOString(),
+            name: contact?.name ?? 'Client',
+            phone: contact?.phone ?? '',
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           })
-          const calData = await calRes.json().catch(() => null)
-          if (!calRes.ok || !calData?.ok) {
-            console.error('[Cal.com RDV] réponse', calRes.status, calData)
-            throw new Error(
-              `Cal.com (${calRes.status}) : ` +
-              (typeof calData?.error === 'string'
-                ? calData.error
-                : calData
-                  ? JSON.stringify(calData)
-                  : 'réponse vide du serveur')
-            )
-          }
           calcomUid = calData.booking?.uid ?? null
         }
       }
 
+      // ---- 0 bis. Report dans Cal.com si l'horaire d'un RDV lié change ----
+      if (
+        editingRdv?.cal_booking_uid &&
+        editingRdv.status !== 'cancelled' &&
+        new Date(editingRdv.start_time).getTime() !== startTimeObj.getTime()
+      ) {
+        await calcomBookings('PATCH', {
+          uid: editingRdv.cal_booking_uid,
+          start: startTimeObj.toISOString(),
+        })
+      }
+
       // ---- 1. Écriture dans service_bookings ----
-      const sbPayload: Record<string, any> = {
+      const sbPayload: Record<string, unknown> = {
         account_id: account.id,
         service_id: formData.booking_kind === 'service' ? formData.service_id : null,
         produit_id: formData.booking_kind === 'produit' ? formData.produit_id : null,
@@ -895,7 +892,7 @@ export default function RendezVousPage() {
 
       // ---- 2. Écriture dans bookings ----
       const nowIso = new Date().toISOString()
-      const bookingPayload: Record<string, any> = {
+      const bookingPayload: Record<string, unknown> = {
         account_id: account.id,
         contact_id: formData.contact_id,
         bookable_item_id: serviceBookingId,
@@ -904,6 +901,8 @@ export default function RendezVousPage() {
         end_time: endTimeObj.toISOString(),
         attendee_name: contact?.name ?? null,
         attendee_phone: contact?.phone ?? null,
+        // Colonne lue par le webhook Cal.com (n8n) pour retrouver ce RDV
+        ...(calcomUid ? { cal_booking_uid: calcomUid } : {}),
         raw_payload: (() => {
           const base =
             editingRdv?.raw_payload && typeof editingRdv.raw_payload === 'object'
@@ -912,7 +911,6 @@ export default function RendezVousPage() {
           const merged = {
             ...base,
             ...(formData.notes ? { notes: formData.notes } : {}),
-            ...(calcomUid ? { calcom_uid: calcomUid } : {}),
           }
           return Object.keys(merged).length > 0 ? merged : null
         })(),
@@ -926,9 +924,9 @@ export default function RendezVousPage() {
         : await supabase.from('bookings').insert(bookingPayload)
 
       if (bookingErr) {
-        // Rollback : si on venait de créer le service_booking, on le supprime
+        // Rollback : libère le créneau (pas de policy DELETE sur service_bookings)
         if (!editingRdv && serviceBookingId) {
-          await supabase.from('service_bookings').delete().eq('id', serviceBookingId)
+          await supabase.from('service_bookings').update({ status: 'cancelled' }).eq('id', serviceBookingId)
         }
         throw bookingErr
       }
@@ -944,17 +942,13 @@ export default function RendezVousPage() {
       setEditingRdv(null)
       setFormData(EMPTY_RDV_FORM)
       fetchRdv()
-    } catch (err: any) {
+    } catch (err) {
       console.error(err)
       // Évite une réservation orpheline dans Cal.com si la base a échoué
       if (calcomUid) {
-        await fetch('/api/calcom/bookings', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ uid: calcomUid, reason: 'Échec enregistrement WA-CRM' }),
-        }).catch(() => null)
+        await calcomBookings('DELETE', { uid: calcomUid, reason: 'Échec enregistrement WA-CRM' }).catch(() => null)
       }
-      toast.error(err?.message || 'Erreur lors de la sauvegarde du rendez-vous')
+      toast.error((err as Error)?.message || 'Erreur lors de la sauvegarde du rendez-vous')
     } finally {
       setSaving(false)
     }
@@ -964,46 +958,79 @@ export default function RendezVousPage() {
   // Delete / Confirm / Cancel (répercutés sur bookings ET service_bookings)
   // -------------------------------------------------------------------
 
+  // Le créneau est libéré en passant le service_booking à 'cancelled' :
+  // la RLS n'autorise pas DELETE sur service_bookings.
+  async function releaseSlot(rdv: RdvItem) {
+    if (!rdv.service_booking_id) return
+    const { error } = await supabase
+      .from('service_bookings')
+      .update({ status: 'cancelled' })
+      .eq('id', rdv.service_booking_id)
+    if (error) throw error
+  }
+
+  async function cancelInCalcom(rdv: RdvItem) {
+    if (rdv.cal_booking_uid && rdv.status !== 'cancelled') {
+      await calcomBookings('DELETE', { uid: rdv.cal_booking_uid, reason: 'Annulé depuis WA-CRM' })
+    }
+  }
+
   async function handleDelete() {
     if (!deleteTarget) return
     setDeleting(true)
 
     try {
-      const { error } = await supabase.from('bookings').delete().eq('id', deleteTarget.id)
-      if (error) throw error
+      await cancelInCalcom(deleteTarget)
 
-      if (deleteTarget.service_booking_id) {
-        await supabase.from('service_bookings').delete().eq('id', deleteTarget.service_booking_id)
-      }
+      const { error, count } = await supabase
+        .from('bookings')
+        .delete({ count: 'exact' })
+        .eq('id', deleteTarget.id)
+      if (error) throw error
+      if (!count) throw new Error('Suppression refusée : réservée aux administrateurs')
+
+      await releaseSlot(deleteTarget)
 
       toast.success('Rendez-vous supprimé')
       setDeleteTarget(null)
       fetchRdv()
-    } catch (err: any) {
+    } catch (err) {
       console.error('Erreur suppression:', err)
-      toast.error(err?.message || 'Erreur lors de la suppression')
+      toast.error((err as Error)?.message || 'Erreur lors de la suppression')
     } finally {
       setDeleting(false)
     }
   }
 
-  async function handleConfirm(rdv: RdvItem) {
-    const nowIso = new Date().toISOString()
-    await supabase.from('bookings').update({ status: 'confirmed', updated_at: nowIso }).eq('id', rdv.id)
-    if (rdv.service_booking_id) {
-      await supabase.from('service_bookings').update({ status: 'confirmed' }).eq('id', rdv.service_booking_id)
+  async function setStatus(rdv: RdvItem, status: 'confirmed' | 'cancelled') {
+    try {
+      if (status === 'cancelled') await cancelInCalcom(rdv)
+
+      const { error } = await supabase
+        .from('bookings')
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', rdv.id)
+      if (error) throw error
+
+      if (status === 'cancelled') {
+        await releaseSlot(rdv)
+      } else if (rdv.service_booking_id) {
+        const { error: sbError } = await supabase
+          .from('service_bookings')
+          .update({ status: 'confirmed' })
+          .eq('id', rdv.service_booking_id)
+        if (sbError) throw sbError
+      }
+
+      setRdvList((prev) => prev.map((r) => (r.id === rdv.id ? { ...r, status } : r)))
+    } catch (err) {
+      console.error('Erreur changement de statut:', err)
+      toast.error(err instanceof Error ? err.message : 'Erreur lors du changement de statut')
     }
-    setRdvList((prev) => prev.map((r) => (r.id === rdv.id ? { ...r, status: 'confirmed' } : r)))
   }
 
-  async function handleCancel(rdv: RdvItem) {
-    const nowIso = new Date().toISOString()
-    await supabase.from('bookings').update({ status: 'cancelled', updated_at: nowIso }).eq('id', rdv.id)
-    if (rdv.service_booking_id) {
-      await supabase.from('service_bookings').update({ status: 'cancelled' }).eq('id', rdv.service_booking_id)
-    }
-    setRdvList((prev) => prev.map((r) => (r.id === rdv.id ? { ...r, status: 'cancelled' } : r)))
-  }
+  const handleConfirm = (rdv: RdvItem) => setStatus(rdv, 'confirmed')
+  const handleCancel = (rdv: RdvItem) => setStatus(rdv, 'cancelled')
 
   // -------------------------------------------------------------------
   // Stats
@@ -1157,7 +1184,7 @@ export default function RendezVousPage() {
                   {isToday(date + 'T00:00:00') ? (
                     <span className="flex items-center gap-1.5">
                       <span className="inline-block h-2 w-2 rounded-full bg-primary animate-pulse" />
-                      Aujourd'hui
+                      Aujourd’hui
                     </span>
                   ) : (
                     formatGroupDate(date)
