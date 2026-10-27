@@ -6,6 +6,8 @@ const h = vi.hoisted(() => ({
   state: {
     owned: null as { id: string } | null,
     ownedCustomField: null as { id: string } | null,
+    /** Row the account-scoped `conversations` lookup resolves. */
+    ownedConversation: null as { id: string } | null,
     automations: [] as Record<string, unknown>[],
     steps: [] as Record<string, unknown>[],
     fromCalls: [] as string[],
@@ -33,6 +35,9 @@ vi.mock("./admin-client", () => {
       }
       // ownership guard / condition read
       return { data: state.owned, error: null };
+    }
+    if (table === "conversations") {
+      return { data: state.ownedConversation, error: null };
     }
     if (table === "custom_fields") {
       // account-scoped ownership lookup for a custom field definition
@@ -112,6 +117,7 @@ const ACCOUNT = "acct-1";
 beforeEach(() => {
   h.state.owned = null;
   h.state.ownedCustomField = null;
+  h.state.ownedConversation = null;
   h.state.automations = [];
   h.state.steps = [];
   h.state.fromCalls = [];
@@ -151,6 +157,43 @@ describe("runAutomationsForTrigger — tenant isolation", () => {
       triggerType: "new_message_received",
       contactId: "c1",
       context: {},
+    });
+
+    expect(h.state.fromCalls).toContain("automations");
+  });
+
+  it("refuses a caller-supplied conversation_id from another account (GHSA-m4fx-g6pr-hrw8)", async () => {
+    // POST /api/automations/engine copies `body.context` verbatim into
+    // the run, so this id is attacker-controlled. The contact is the
+    // caller's own — only the conversation is foreign, which is exactly
+    // what made this a cross-tenant message-injection primitive.
+    h.state.owned = { id: "c1" };
+    h.state.ownedConversation = null; // not in this account
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [updateStep()];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: { conversation_id: "victim-conversation-uuid" },
+    });
+
+    expect(h.state.fromCalls).toContain("conversations");
+    expect(h.state.fromCalls).not.toContain("automations");
+    expect(h.state.updateCalls).toHaveLength(0);
+  });
+
+  it("proceeds when the conversation belongs to the account", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.ownedConversation = { id: "conv-1" };
+    h.state.automations = [];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: { conversation_id: "conv-1" },
     });
 
     expect(h.state.fromCalls).toContain("automations");
@@ -301,6 +344,42 @@ describe("send_webhook — SSRF guard (GHSA-8jqh-598v-rfxc)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
 
     vi.unstubAllGlobals();
+  });
+});
+
+describe("send_webhook — n8n shared secret", () => {
+  async function sentHeaders(url: string) {
+    const fetchSpy = vi.fn(async (_url: string, _init: RequestInit) => ({ ok: true, status: 202 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    h.state.owned = { id: "c1" };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [webhookStep(url)];
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: {},
+    });
+    vi.unstubAllGlobals();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    return fetchSpy.mock.calls[0][1].headers as Record<string, string>;
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("N8N_WEBHOOK_ORIGIN", "https://93.184.216.34");
+    vi.stubEnv("N8N_WEBHOOK_SECRET", "s3cret");
+  });
+
+  it("adds X-Webhook-Secret when the step targets the n8n origin", async () => {
+    const headers = await sentHeaders("https://93.184.216.34/webhook/whatsapp-inbound");
+    expect(headers["X-Webhook-Secret"]).toBe("s3cret");
+    vi.unstubAllEnvs();
+  });
+
+  it("never sends the secret to any other origin", async () => {
+    const headers = await sentHeaders("https://93.184.216.35/hook");
+    expect(headers["X-Webhook-Secret"]).toBeUndefined();
+    vi.unstubAllEnvs();
   });
 });
 

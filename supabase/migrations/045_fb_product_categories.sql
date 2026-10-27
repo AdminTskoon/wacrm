@@ -1,5 +1,5 @@
 -- ============================================================
--- 043_fb_product_categories.sql
+-- 045_fb_product_categories.sql
 -- ============================================================
 -- Table de référence des catégories produit Facebook.
 -- Les données sont importées depuis le CSV category_id,category.

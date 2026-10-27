@@ -85,18 +85,19 @@ const nextConfig: NextConfig = {
    * has no effect on a production build.
    */
   allowedDevOrigins: [
+    "wacrm.tskoon.io",
     "*.ngrok-free.app",
     "*.ngrok.app",
     "*.ngrok.io",
     "*.trycloudflare.com",
     "*.loca.lt",
-    "wacrm.tskoon.io",
     ...(process.env.ALLOWED_DEV_ORIGINS
       ? process.env.ALLOWED_DEV_ORIGINS.split(",")
         .map((origin) => origin.trim())
         .filter(Boolean)
       : []),
   ],
+
   /**
    * Cache-Control policy.
    *
