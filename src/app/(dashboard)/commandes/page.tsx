@@ -270,6 +270,7 @@ export default function CommandesPage() {
       .from('orders')
       .select('id', { count: 'exact' })
       .eq('account_id', account.id)
+      .neq('status', 'cancelled')
       .order('created_at', { ascending: false })
 
     if (search.trim()) {
@@ -369,7 +370,7 @@ export default function CommandesPage() {
           quantity: String(item.quantity ?? 1),
         },
       ],
-      payment_status: item.orders?.payment_status ?? 'received',
+      payment_status: item.orders?.payment_status ?? 'pending',
       createdAt: item.orders?.created_at ? new Date(item.orders.created_at).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16),
     })
     setFormOpen(true)
@@ -410,6 +411,35 @@ export default function CommandesPage() {
   async function handleSave() {
     if (!account?.id) {
       toast.error('Aucun compte actif')
+      return
+    }
+
+    // Modification : seuls l'en-tête et le paiement sont éditables, les lignes
+    // (et donc le stock) ne bougent pas.
+    if (editingItem) {
+      const contact = contacts.find((c) => (c.name ?? '') === formData.contactName)
+      setSaving(true)
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          contact_name: formData.contactName.trim() || null,
+          ...(contact?.phone ? { contact_phone: contact.phone } : {}),
+          payment_status: formData.payment_status || 'pending',
+          ...(formData.createdAt ? { created_at: new Date(formData.createdAt).toISOString() } : {}),
+        })
+        .eq('id', editingItem.order_id)
+        .eq('account_id', account.id)
+      setSaving(false)
+      if (error) {
+        console.error('Order update error:', error)
+        toast.error(error.message || 'Erreur lors de la modification de la commande')
+        return
+      }
+      toast.success('Commande modifiée')
+      setFormOpen(false)
+      setEditingItem(null)
+      setFormData(EMPTY_ORDER_FORM)
+      fetchCommandes()
       return
     }
 
@@ -454,40 +484,34 @@ export default function CommandesPage() {
     setSaving(true)
 
     try {
-      const { data: orderData, error: orderError } = await supabase.from('orders').insert({
-        account_id: account.id,
-        contact_name: formData.contactName.trim() || null,
-        contact_phone: selectedContact.phone,
-        payment_status: formData.payment_status || 'pending',
-        status: 'confirmed',
-        created_at: createdAt,
-        total,
-      }).select('id').single()
-
-      if (orderError || !orderData?.id) {
-        throw orderError ?? new Error('Impossible de créer la commande')
+      // Même fonction que les commandes WhatsApp : commande + lignes + stock en une transaction.
+      const { data: created, error: rpcError } = await supabase.rpc('create_whatsapp_order', {
+        p_account_id: account.id,
+        p_contact_phone: selectedContact.phone,
+        p_contact_name: formData.contactName.trim() || null,
+        p_items: resolvedItems,
+      })
+      const order = Array.isArray(created) ? created[0] : created
+      if (rpcError || !order?.order_id) {
+        throw rpcError ?? new Error('Impossible de créer la commande')
       }
 
-      const { error: itemsError } = await supabase.from('order_items').insert(
-        resolvedItems.map((item) => ({
-          order_id: orderData.id,
-          produit_id: item.produit_id,
-          quantity: item.quantity,
-          item_price: item.item_price,
-        }))
-      )
+      const { error: headerError } = await supabase
+        .from('orders')
+        .update({ payment_status: formData.payment_status || 'pending', created_at: createdAt })
+        .eq('id', order.order_id)
+      if (headerError) throw headerError
 
-      if (itemsError) {
-        throw itemsError
+      if (order.has_oversold_items) {
+        toast.warning('Commande créée en « à vérifier » : stock insuffisant, aucun stock réservé')
       }
-
       toast.success('Commande créée avec succès')
       setFormOpen(false)
       setFormData(EMPTY_ORDER_FORM)
       fetchCommandes()
-    } catch (error: any) {
+    } catch (error) {
       console.error('Order save error:', error)
-      toast.error(error?.message || 'Erreur lors de la sauvegarde de la commande')
+      toast.error((error as Error)?.message || 'Erreur lors de la sauvegarde de la commande')
     } finally {
       setSaving(false)
     }
@@ -498,31 +522,23 @@ export default function CommandesPage() {
 
     setDeleting(true)
     try {
-      const { error: itemError, count: itemCount } = await supabase
-        .from('order_items')
-        .delete({ count: 'exact' })
-        .eq('order_id', deleteTarget.order_id)
-
-      if (itemError) throw itemError
-
-      const { error: orderError, count: orderCount } = await supabase
+      // Annulation plutôt que suppression : pas de policy DELETE sur orders, et
+      // l'historique reste consultable en base.
+      const { error, count } = await supabase
         .from('orders')
-        .delete({ count: 'exact' })
+        .update({ status: 'cancelled' }, { count: 'exact' })
         .eq('id', deleteTarget.order_id)
         .eq('account_id', account.id)
 
-      if (orderError) throw orderError
+      if (error) throw error
+      if (!count) throw new Error('Aucune commande annulée — vérifiez les droits d\'accès')
 
-      if (!orderCount) {
-        throw new Error('Aucune commande supprimée — vérifiez les droits d\'accès (RLS)')
-      }
-
-      toast.success('Commande supprimée')
+      toast.success('Commande annulée')
       setDeleteTarget(null)
       fetchCommandes()
-    } catch (error: any) {
-      console.error('Order delete error:', error)
-      toast.error(error?.message || 'Erreur lors de la suppression')
+    } catch (error) {
+      console.error('Order cancel error:', error)
+      toast.error((error as Error)?.message || 'Erreur lors de l’annulation')
     } finally {
       setDeleting(false)
     }
@@ -654,7 +670,7 @@ export default function CommandesPage() {
                             <DropdownMenuSeparator />
                             <DropdownMenuItem onClick={() => setDeleteTarget({ id: row.order_id, order_id: row.order_id, item_price: 0, quantity: 1, produits: null, orders: { contact_name: row.contact_name, created_at: row.created_at, payment_status: row.payment_status } } as RawItem)} className="text-red-400 focus:text-red-400">
                               <Trash2 className="mr-2 h-4 w-4" />
-                              Supprimer
+                              Annuler la commande
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -732,6 +748,7 @@ export default function CommandesPage() {
               </div>
             </div>
 
+            {!editingItem && (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>Produits</Label>
@@ -787,6 +804,7 @@ export default function CommandesPage() {
                 ))}
               </div>
             </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="payment_status">Statut du paiement</Label>
@@ -826,17 +844,17 @@ export default function CommandesPage() {
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Supprimer la commande</DialogTitle>
+            <DialogTitle>Annuler la commande</DialogTitle>
             <DialogDescription>
-              Cette action supprimera la commande et l’article associé.
+              La commande passera au statut « annulée » et disparaîtra de la liste. Le stock n’est pas réajusté automatiquement.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
-              Annuler
+              Retour
             </Button>
             <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
-              {deleting ? 'Suppression…' : 'Supprimer'}
+              {deleting ? 'Annulation…' : 'Annuler la commande'}
             </Button>
           </DialogFooter>
         </DialogContent>
