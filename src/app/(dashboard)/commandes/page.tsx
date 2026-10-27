@@ -529,16 +529,14 @@ export default function CommandesPage() {
 
     setDeleting(true)
     try {
-      // Annulation plutôt que suppression : pas de policy DELETE sur orders, et
-      // l'historique reste consultable en base.
-      const { error, count } = await supabase
-        .from('orders')
-        .update({ status: 'cancelled' }, { count: 'exact' })
-        .eq('id', deleteTarget.order_id)
-        .eq('account_id', account.id)
+      // Annulation plutôt que suppression (pas de policy DELETE sur orders) ;
+      // cancel_order (migration 131) restitue le stock réservé en une transaction.
+      const { data: cancelled, error } = await supabase.rpc('cancel_order', {
+        p_order_id: deleteTarget.order_id,
+      })
 
       if (error) throw error
-      if (!count) throw new Error('Aucune commande annulée — vérifiez les droits d\'accès')
+      if (!cancelled) throw new Error('Commande déjà annulée ou inaccessible')
 
       toast.success('Commande annulée')
       setDeleteTarget(null)
@@ -856,7 +854,7 @@ export default function CommandesPage() {
           <DialogHeader>
             <DialogTitle>Annuler la commande</DialogTitle>
             <DialogDescription>
-              La commande passera au statut « annulée » et disparaîtra de la liste. Le stock n’est pas réajusté automatiquement.
+              La commande passera au statut « annulée » et disparaîtra de la liste. Le stock réservé sera restitué.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
