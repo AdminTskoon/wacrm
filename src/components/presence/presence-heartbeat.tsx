@@ -48,6 +48,7 @@ export function PresenceHeartbeat() {
       return "online";
     };
 
+    let warnedOnce = false;
     const beat = async () => {
       if (cancelled) return;
       // Coalesce bursts: a tab refocus fires visibilitychange AND focus
@@ -60,9 +61,16 @@ export function PresenceHeartbeat() {
         p_status: currentStatus(),
       });
       if (error && !cancelled) {
-        // Non-fatal: presence is best-effort. Log once per failure so a
-        // misconfigured RPC is visible without spamming.
-        console.error("[PresenceHeartbeat] touch_presence failed:", error.message);
+        // Non-fatal: presence is best-effort. Warn once per mount so a
+        // misconfigured RPC is visible without spamming the console on
+        // every transient network hiccup.
+        if (!warnedOnce) {
+          console.warn("[PresenceHeartbeat] touch_presence failed (will retry):", error.message);
+          warnedOnce = true;
+        }
+      } else if (!error) {
+        // Reset so a future sustained failure is reported again.
+        warnedOnce = false;
       }
     };
 

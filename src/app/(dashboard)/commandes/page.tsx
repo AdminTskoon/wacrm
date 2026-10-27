@@ -246,6 +246,7 @@ export default function CommandesPage() {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
   const [totalGroups, setTotalGroups] = useState(0)
+  const [pageSize, setPageSize] = useState(15)
   const [products, setProducts] = useState<ProductOption[]>([])
   const [contacts, setContacts] = useState<ContactOption[]>([])
   const [formOpen, setFormOpen] = useState(false)
@@ -276,7 +277,7 @@ export default function CommandesPage() {
     }
 
     const { data: orderIds, error: orderErr, count } = await orderQuery
-      .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1)
+      .range(page * pageSize, page * pageSize + pageSize - 1)
 
     if (orderErr) {
       console.error('Failed to fetch orders:', orderErr)
@@ -323,7 +324,7 @@ export default function CommandesPage() {
 
     setGroups(groupByOrder(sorted as unknown as RawItem[]))
     setLoading(false)
-  }, [supabase, account?.id, page, search])
+  }, [supabase, account?.id, page, search, pageSize])
 
   useEffect(() => {
     fetchCommandes()
@@ -331,7 +332,7 @@ export default function CommandesPage() {
 
   useEffect(() => {
     setPage(0)
-  }, [search])
+  }, [pageSize])
 
   useEffect(() => {
     const loadProducts = async () => {
@@ -531,7 +532,7 @@ export default function CommandesPage() {
   // Pagination
   // -------------------------------------------------------------------
 
-  const totalPages = Math.max(1, Math.ceil(totalGroups / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(totalGroups / pageSize))
   const canPrev = page > 0
   const canNext = page < totalPages - 1
 
@@ -567,130 +568,133 @@ export default function CommandesPage() {
       </div>
 
       {/* Table */}
-      <div className="rounded-lg border border-border bg-card flex-1 overflow-auto [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border/60 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-border/80">
-        <Table>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <TableHead className="text-foreground font-medium">ID</TableHead>
-              <TableHead className="text-foreground font-medium">Contact</TableHead>
-              <TableHead className="text-foreground font-medium">Produit</TableHead>
-              <TableHead className="text-right text-foreground font-medium">Total</TableHead>
-              <TableHead className="text-foreground font-medium">Statut</TableHead>
-              <TableHead className="text-foreground font-medium">Date</TableHead>
-            </TableRow>
-          </TableHeader>
-
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={COL_COUNT} className="h-32 text-center">
-                  <div className="flex items-center justify-center gap-2 text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Chargement…
-                  </div>
-                </TableCell>
+      <div className="rounded-lg border border-border bg-card flex-1 flex flex-col overflow-hidden min-h-0">
+        <div className="flex-1 min-h-0 [&>[data-slot=table-container]]:h-full [&>[data-slot=table-container]]:overflow-y-auto [&>[data-slot=table-container]]:[&::-webkit-scrollbar]:h-2 [&>[data-slot=table-container]]:[&::-webkit-scrollbar]:w-2 [&>[data-slot=table-container]]:[&::-webkit-scrollbar-track]:bg-transparent [&>[data-slot=table-container]]:[&::-webkit-scrollbar-thumb]:bg-border/60 [&>[data-slot=table-container]]:[&::-webkit-scrollbar-thumb]:rounded-full">
+          <Table className="border-separate border-spacing-0">
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="sticky top-0 z-10 bg-card text-foreground font-medium">ID</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card text-foreground font-medium">Contact</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card text-foreground font-medium">Produit</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card text-right text-foreground font-medium">Total</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card text-foreground font-medium">Statut</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card text-foreground font-medium">Date</TableHead>
               </TableRow>
-            ) : groups.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={COL_COUNT} className="h-32 text-center">
-                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                    <ShoppingCart className="h-8 w-8 opacity-40" />
-                    {search ? 'Aucune commande trouvée' : 'Aucune commande pour le moment'}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ) : (
-              groups.map((group) => {
-                const row = group.rows[0]
-                if (!row) return null
+            </TableHeader>
 
-                return (
-                  <TableRow key={group.order_id} className="hover:bg-muted/40">
-                    <TableCell className="font-mono text-xs text-foreground/90">
-                      <span title={row.order_id}>{shortId(row.order_id)}</span>
-                    </TableCell>
+            <TableBody>
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={COL_COUNT} className="h-32 text-center">
+                    <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Chargement…
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : groups.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={COL_COUNT} className="h-32 text-center">
+                    <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                      <ShoppingCart className="h-8 w-8 opacity-40" />
+                      {search ? 'Aucune commande trouvée' : 'Aucune commande pour le moment'}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                groups.map((group) => {
+                  const row = group.rows[0]
+                  if (!row) return null
 
-                    <TableCell className="font-medium text-foreground" title={row.contact_name || undefined}>
-                      <div className="break-words whitespace-normal">
-                        {row.contact_name || '—'}
-                      </div>
-                    </TableCell>
+                  return (
+                    <TableRow key={group.order_id} className="hover:bg-muted/40">
+                      <TableCell className="font-mono text-xs text-foreground/90">
+                        <span title={row.order_id}>{shortId(row.order_id)}</span>
+                      </TableCell>
 
-                    <TableCell className="max-w-[260px] break-words whitespace-normal text-foreground/90" title={row.products || undefined}>
-                      {row.products || '—'}
-                    </TableCell>
+                      <TableCell className="font-medium text-foreground" title={row.contact_name || undefined}>
+                        <div className="break-words whitespace-normal">
+                          {row.contact_name || '—'}
+                        </div>
+                      </TableCell>
 
-                    <TableCell className="text-right tabular-nums font-semibold text-foreground">
-                      {fmtCurrency(row.total)}
-                    </TableCell>
+                      <TableCell className="max-w-[260px] break-words whitespace-normal text-foreground/90" title={row.products || undefined}>
+                        {row.products || '—'}
+                      </TableCell>
 
-                    <TableCell className="align-middle capitalize">
-                      {getPendingStatusBadge(row.payment_status)}
-                    </TableCell>
+                      <TableCell className="text-right tabular-nums font-semibold text-foreground">
+                        {fmtCurrency(row.total)}
+                      </TableCell>
 
-                    <TableCell className="align-middle text-foreground font-medium">
-                      {fmtDate(row.created_at)}
-                    </TableCell>
+                      <TableCell className="align-middle capitalize">
+                        {getPendingStatusBadge(row.payment_status)}
+                      </TableCell>
 
-                    <TableCell className="w-12 text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <button
-                              type="button"
-                              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                            />
-                          }
-                        >
-                          <MoreHorizontal className="h-4 w-4" />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="min-w-36 bg-popover text-popover-foreground ring-border">
-                          <DropdownMenuItem onClick={() => openEditModal({ id: row.order_id, order_id: row.order_id, item_price: 0, quantity: 1, produits: null, orders: { contact_name: row.contact_name, created_at: row.created_at, payment_status: row.payment_status } } as RawItem)}>
-                            <Pencil className="mr-2 h-4 w-4" />
-                            Modifier
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => setDeleteTarget({ id: row.order_id, order_id: row.order_id, item_price: 0, quantity: 1, produits: null, orders: { contact_name: row.contact_name, created_at: row.created_at, payment_status: row.payment_status } } as RawItem)} className="text-red-400 focus:text-red-400">
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Supprimer
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                )
-              })
-            )}
-          </TableBody>
-        </Table>
+                      <TableCell className="align-middle text-foreground font-medium">
+                        {fmtDate(row.created_at)}
+                      </TableCell>
+
+                      <TableCell className="w-12 text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <button
+                                type="button"
+                                className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                              />
+                            }
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-36 bg-popover text-popover-foreground ring-border">
+                            <DropdownMenuItem onClick={() => openEditModal({ id: row.order_id, order_id: row.order_id, item_price: 0, quantity: 1, produits: null, orders: { contact_name: row.contact_name, created_at: row.created_at, payment_status: row.payment_status } } as RawItem)}>
+                              <Pencil className="mr-2 h-4 w-4" />
+                              Modifier
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => setDeleteTarget({ id: row.order_id, order_id: row.order_id, item_price: 0, quantity: 1, produits: null, orders: { contact_name: row.contact_name, created_at: row.created_at, payment_status: row.payment_status } } as RawItem)} className="text-red-400 focus:text-red-400">
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Supprimer
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
 
         {/* Pagination */}
-        {totalGroups > PAGE_SIZE && (
-          <div className="flex items-center justify-between border-t border-border px-4 py-3">
+        <div className="flex items-center justify-between border-t border-border px-4 py-3">
+          <p className="text-sm text-muted-foreground">
+            {totalGroups} commande{totalGroups > 1 ? 's' : ''} au total
+          </p>
+          <div className="flex items-center gap-4">
             <p className="text-sm text-muted-foreground">
-              Commandes {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalGroups)} sur{' '}
-              {totalGroups}
+              Page {page + 1} sur {totalPages}
             </p>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+            </select>
             <div className="flex gap-1">
-              <Button
-                variant="outline"
-                size="icon-sm"
-                disabled={!canPrev}
-                onClick={() => setPage((p) => p - 1)}
-              >
+              <Button variant="outline" size="icon-sm" disabled={!canPrev} onClick={() => setPage((p) => p - 1)}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <Button
-                variant="outline"
-                size="icon-sm"
-                disabled={!canNext}
-                onClick={() => setPage((p) => p + 1)}
-              >
+              <Button variant="outline" size="icon-sm" disabled={!canNext} onClick={() => setPage((p) => p + 1)}>
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
           </div>
-        )}
+        </div>
       </div>
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>

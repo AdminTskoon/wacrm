@@ -66,6 +66,7 @@ interface RdvItem {
   time_slot: string | null
   booking_date: string | null
   end_date: string | null
+  raw_payload: any
 }
 
 type StatusFilter = 'Toutes' | 'confirmed' | 'pending' | 'cancelled' | 'completed'
@@ -82,6 +83,8 @@ interface ServiceOption {
   title: string
   attributes: { duration?: string } | null
   price: number | null
+  cal_event_slug?: string | null
+  cal_username?: string | null
 }
 
 // NOTE : je n'ai pas la structure exacte de la table `produits`. Je pars du
@@ -537,6 +540,7 @@ export default function RendezVousPage() {
         time_slot: sb?.time_slot ?? null,
         booking_date: sb?.booking_date ?? null,
         end_date: sb?.end_date ?? null,
+        raw_payload: rawPayloadObj,
       }
     })
 
@@ -597,7 +601,7 @@ export default function RendezVousPage() {
 
       const { data: servicesData, error: servicesError } = await supabase
         .from('services')
-        .select('id, title, attributes, price')
+        .select('id, title, attributes, price, cal_event_slug, cal_username')
         .eq('account_id', account.id)
         .order('title')
 
@@ -717,10 +721,13 @@ export default function RendezVousPage() {
     }
 
     setSaving(true)
-
+    let calcomUid: string | null = null
     try {
       // ---- Vérification des conflits ----
       if (formData.booking_kind === 'service') {
+        // --- Chemin 1 : bookings créés via l'interface (bookable_item_source = 'service_bookings') ---
+        // On passe par service_bookings pour retrouver les booking_ids, puis on
+        // vérifie le chevauchement sur bookings.start_time / end_time.
         const { data: siblingSb, error: sbErr } = await supabase
           .from('service_bookings')
           .select('id, status')
@@ -740,6 +747,7 @@ export default function RendezVousPage() {
               .from('bookings')
               .select('start_time, end_time')
               .in('bookable_item_id', siblingIds)
+              .not('status', 'eq', 'cancelled')
 
             if (bErr) console.error('Erreur vérification conflits bookings:', bErr)
 
@@ -758,7 +766,45 @@ export default function RendezVousPage() {
             }
           }
         }
+
+        // --- Chemin 2 : bookings créés via WhatsApp / Cal.com ---
+        // Ces bookings ont bookable_item_id = id du service directement dans `services`
+        // (bookable_item_source IS NULL). On interroge bookings directement.
+        {
+          let directQuery = supabase
+            .from('bookings')
+            .select('id, start_time, end_time, status')
+            .eq('account_id', account.id)
+            .eq('bookable_item_id', formData.service_id)
+            .is('bookable_item_source', null)
+            .not('status', 'eq', 'cancelled')
+
+          if (editingRdv) {
+            directQuery = directQuery.neq('id', editingRdv.id)
+          }
+
+          const { data: directBookings, error: directErr } = await directQuery
+
+          if (directErr) {
+            console.error('Erreur vérification conflits WhatsApp:', directErr)
+          } else {
+            const newStart = startTimeObj.getTime()
+            const newEnd = endTimeObj.getTime()
+            for (const b of directBookings ?? []) {
+              const existingStart = new Date(b.start_time).getTime()
+              const existingEnd = new Date(b.end_time).getTime()
+              if (newStart < existingEnd && newEnd > existingStart) {
+                toast.error(
+                  `Ce service est déjà réservé le ${formatDateShort(b.start_time)} sur ce créneau (réservation WhatsApp). Veuillez choisir un autre horaire.`
+                )
+                setSaving(false)
+                return
+              }
+            }
+          }
+        }
       } else {
+        // --- Chemin produit : vérification par rental_period ---
         let rangeQuery = supabase
           .from('service_bookings')
           .select('id')
@@ -779,6 +825,39 @@ export default function RendezVousPage() {
           toast.error('Ce produit est déjà réservé sur une période qui chevauche ces dates.')
           setSaving(false)
           return
+        }
+      }
+
+      // ---- 0. Création dans Cal.com (services liés à un événement Cal.com) ----
+      if (!editingRdv && formData.booking_kind === 'service') {
+        const selectedSvc = services.find((s) => s.id === formData.service_id)
+        console.log('[Cal.com RDV] service =', selectedSvc?.title, '| slug =', selectedSvc?.cal_event_slug)
+        if (selectedSvc?.cal_event_slug) {
+          const calRes = await fetch('/api/calcom/bookings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              eventTypeSlug: selectedSvc.cal_event_slug,
+              username: selectedSvc.cal_username || undefined,
+              start: startTimeObj.toISOString(),
+              name: contact?.name ?? 'Client',
+              phone: contact?.phone ?? '',
+              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            }),
+          })
+          const calData = await calRes.json().catch(() => null)
+          if (!calRes.ok || !calData?.ok) {
+            console.error('[Cal.com RDV] réponse', calRes.status, calData)
+            throw new Error(
+              `Cal.com (${calRes.status}) : ` +
+              (typeof calData?.error === 'string'
+                ? calData.error
+                : calData
+                  ? JSON.stringify(calData)
+                  : 'réponse vide du serveur')
+            )
+          }
+          calcomUid = calData.booking?.uid ?? null
         }
       }
 
@@ -825,7 +904,18 @@ export default function RendezVousPage() {
         end_time: endTimeObj.toISOString(),
         attendee_name: contact?.name ?? null,
         attendee_phone: contact?.phone ?? null,
-        raw_payload: formData.notes ? { notes: formData.notes } : null,
+        raw_payload: (() => {
+          const base =
+            editingRdv?.raw_payload && typeof editingRdv.raw_payload === 'object'
+              ? editingRdv.raw_payload
+              : {}
+          const merged = {
+            ...base,
+            ...(formData.notes ? { notes: formData.notes } : {}),
+            ...(calcomUid ? { calcom_uid: calcomUid } : {}),
+          }
+          return Object.keys(merged).length > 0 ? merged : null
+        })(),
         ...(editingRdv
           ? { updated_at: nowIso }
           : { status: 'pending', created_at: nowIso, updated_at: nowIso }),
@@ -843,13 +933,27 @@ export default function RendezVousPage() {
         throw bookingErr
       }
 
-      toast.success(editingRdv ? 'Rendez-vous modifié avec succès' : 'Rendez-vous créé avec succès')
+      toast.success(
+        editingRdv
+          ? 'Rendez-vous modifié avec succès'
+          : calcomUid
+            ? 'Rendez-vous créé et envoyé à Cal.com'
+            : 'Rendez-vous créé (non envoyé à Cal.com)'
+      )
       setFormOpen(false)
       setEditingRdv(null)
       setFormData(EMPTY_RDV_FORM)
       fetchRdv()
     } catch (err: any) {
       console.error(err)
+      // Évite une réservation orpheline dans Cal.com si la base a échoué
+      if (calcomUid) {
+        await fetch('/api/calcom/bookings', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uid: calcomUid, reason: 'Échec enregistrement WA-CRM' }),
+        }).catch(() => null)
+      }
       toast.error(err?.message || 'Erreur lors de la sauvegarde du rendez-vous')
     } finally {
       setSaving(false)

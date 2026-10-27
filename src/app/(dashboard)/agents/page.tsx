@@ -1,34 +1,36 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Bot, Sparkles, Settings2, BarChart3 } from 'lucide-react';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { AiPlayground } from '@/components/agents/ai-playground';
-import { AiUsageCard } from '@/components/agents/ai-usage';
-import { AiConfig } from '@/components/settings/ai-config';
+import { Bot, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { AiKnowledgeCard } from '@/components/settings/ai-knowledge';
 import { useAuth } from '@/hooks/use-auth';
 import { canEditSettings } from '@/lib/auth/roles';
-
-type Tab = 'playground' | 'setup' | 'usage';
+import { useTranslations } from 'next-intl';
+import { toast } from 'sonner';
 
 export default function AgentsPage() {
-  const { accountRole } = useAuth();
-  const canViewUsage = accountRole ? canEditSettings(accountRole) : false;
-  const [tab, setTab] = useState<Tab>('playground');
-  const [decided, setDecided] = useState(false);
+  const t = useTranslations('Settings.aiConfig');
+  const { accountId, accountRole } = useAuth();
+  const canEdit = accountRole ? canEditSettings(accountRole) : false;
+  const [hasEmbeddingsKey, setHasEmbeddingsKey] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [aiConfig, setAiConfig] = useState<any>(null);
 
-  // Land first-time users on Setup, returning users on the Playground.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch('/api/ai/config');
         const data = await res.json().catch(() => ({}));
-        if (!cancelled) setTab(data?.configured ? 'playground' : 'setup');
+        if (!cancelled) {
+          setHasEmbeddingsKey(Boolean(data?.has_embeddings_key));
+          if (data?.configured) {
+            setAiConfig(data);
+          }
+        }
       } catch {
-        if (!cancelled) setTab('setup');
-      } finally {
-        if (!cancelled) setDecided(true);
+        // Ignorer l'erreur
       }
     })();
     return () => {
@@ -36,54 +38,64 @@ export default function AgentsPage() {
     };
   }, []);
 
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      if (aiConfig?.configured) {
+        const res = await fetch('/api/ai/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider: aiConfig.provider,
+            model: aiConfig.model,
+            system_prompt: aiConfig.system_prompt,
+            is_active: aiConfig.is_active,
+            auto_reply_enabled: aiConfig.auto_reply_enabled,
+            auto_reply_max_per_conversation: aiConfig.auto_reply_max_per_conversation,
+            handoff_agent_id: aiConfig.handoff_agent_id,
+          }),
+        });
+        if (res.ok) {
+          toast.success(t('saveSuccess'));
+        } else {
+          toast.error(t('saveFailed'));
+        }
+      } else {
+        toast.success(t('saveSuccess'));
+      }
+    } catch {
+      toast.error(t('saveFailed'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div>
-      <div className="flex items-center gap-2">
-        <Bot className="h-6 w-6 text-primary" />
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">
-          AI Agents
-        </h1>
+    <div className="space-y-6">
+      <div>
+        <div className="flex items-center gap-2">
+          <Bot className="h-6 w-6 text-primary" />
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            AI Agents
+          </h1>
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Gérez votre base de connaissances pour l'agent IA.
+        </p>
       </div>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Your bring-your-own-key AI agent — set it up, then test it in the
-        playground before it replies to customers in the inbox.
-      </p>
 
-      {decided && (
-        <Tabs
-          value={tab}
-          onValueChange={(v) => setTab(v as Tab)}
-          className="mt-6"
-        >
-          <TabsList>
-            <TabsTrigger value="playground">
-              <Sparkles className="mr-1.5 h-4 w-4" /> Playground
-            </TabsTrigger>
-            <TabsTrigger value="setup">
-              <Settings2 className="mr-1.5 h-4 w-4" /> Setup
-            </TabsTrigger>
-            {canViewUsage && (
-              <TabsTrigger value="usage">
-                <BarChart3 className="mr-1.5 h-4 w-4" /> Usage
-              </TabsTrigger>
-            )}
-          </TabsList>
+      <AiKnowledgeCard
+        accountId={accountId}
+        canEdit={canEdit}
+        hasEmbeddingsKey={hasEmbeddingsKey}
+      />
 
-          <TabsContent value="playground" className="mt-4">
-            <AiPlayground onGoToSetup={() => setTab('setup')} />
-          </TabsContent>
-
-          <TabsContent value="setup" className="mt-4">
-            <AiConfig />
-          </TabsContent>
-
-          {canViewUsage && (
-            <TabsContent value="usage" className="mt-4">
-              <AiUsageCard />
-            </TabsContent>
-          )}
-        </Tabs>
-      )}
+      <div className="flex justify-end">
+        <Button onClick={handleSave} disabled={!canEdit || saving}>
+          {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          {t('save')}
+        </Button>
+      </div>
     </div>
   );
 }

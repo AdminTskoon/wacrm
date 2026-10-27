@@ -160,8 +160,6 @@ const EMPTY_FORM: ProduitFormData = {
   for_rent: 'false',
 }
 
-const PAGE_SIZE = 15
-
 // ---------------------------------------------------------------------------
 // Helper — parse optional JSON textarea
 // ---------------------------------------------------------------------------
@@ -236,6 +234,7 @@ export default function ProduitsPage() {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
   const [totalCount, setTotalCount] = useState(0)
+  const [pageSize, setPageSize] = useState(15)
 
   // Modal state
   const [importOpen, setImportOpen] = useState(false);
@@ -271,8 +270,8 @@ export default function ProduitsPage() {
 
   const fetchProduits = useCallback(async () => {
     setLoading(true)
-    const from = page * PAGE_SIZE
-    const to = from + PAGE_SIZE - 1
+    const from = page * pageSize
+    const to = from + pageSize - 1
 
     let query = supabase
       .from('produits')
@@ -294,7 +293,7 @@ export default function ProduitsPage() {
       setTotalCount(count ?? 0)
     }
     setLoading(false)
-  }, [supabase, page, search])
+  }, [supabase, page, search, pageSize])
 
   useEffect(() => {
     fetchProduits()
@@ -302,7 +301,7 @@ export default function ProduitsPage() {
 
   useEffect(() => {
     setPage(0)
-  }, [search])
+  }, [pageSize])
 
   useEffect(() => {
     async function fetchLevel1() {
@@ -744,7 +743,7 @@ export default function ProduitsPage() {
   // Pagination helpers
   // -------------------------------------------------------------------
 
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const canPrev = page > 0
   const canNext = page < totalPages - 1
 
@@ -753,7 +752,7 @@ export default function ProduitsPage() {
   // -------------------------------------------------------------------
 
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col h-[calc(100vh-7rem)] space-y-5">
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -795,151 +794,166 @@ export default function ProduitsPage() {
       </div>
 
       {/* Table */}
-      <div className="rounded-lg border border-border bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <TableHead className="w-14">Image</TableHead>
-              <TableHead>Titre</TableHead>
-              <TableHead className="hidden sm:table-cell">Disponibilité</TableHead>
-              <TableHead className="text-right">Quantité</TableHead>
-              <TableHead className="text-right">Prix</TableHead>
-              <TableHead className="w-12" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={6} className="h-32 text-center">
-                  <div className="flex items-center justify-center gap-2 text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Chargement…
-                  </div>
-                </TableCell>
+      <div className="rounded-lg border border-border bg-card flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 min-h-0 [&>[data-slot=table-container]]:h-full [&>[data-slot=table-container]]:overflow-y-auto [&>[data-slot=table-container]]:[&::-webkit-scrollbar]:h-2 [&>[data-slot=table-container]]:[&::-webkit-scrollbar]:w-2 [&>[data-slot=table-container]]:[&::-webkit-scrollbar-track]:bg-transparent [&>[data-slot=table-container]]:[&::-webkit-scrollbar-thumb]:bg-border/60 [&>[data-slot=table-container]]:[&::-webkit-scrollbar-thumb]:rounded-full">
+          <Table className="border-separate border-spacing-0">
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="sticky top-0 z-10 bg-card w-14">Image</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card">Titre</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card hidden sm:table-cell">Disponibilité</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card text-right">Quantité</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card text-right">Prix</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card hidden md:table-cell whitespace-nowrap">Dernière mise à jour</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card w-12" />
               </TableRow>
-            ) : produits.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} className="h-32 text-center">
-                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                    <Package className="h-8 w-8 opacity-40" />
-                    {search ? 'Aucun produit trouvé' : 'Aucun produit pour le moment'}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ) : (
-              produits.map((p) => {
-                const effectiveAvailability = (p.quantity ?? 0) > 0 ? 'in stock' : 'out of stock'
-                const displayPrice = getCurrentDisplayPrice(p)
+            </TableHeader>
+            <TableBody>
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="h-32 text-center">
+                    <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Chargement…
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : produits.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="h-32 text-center">
+                    <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                      <Package className="h-8 w-8 opacity-40" />
+                      {search ? 'Aucun produit trouvé' : 'Aucun produit pour le moment'}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                produits.map((p) => {
+                  const effectiveAvailability = (p.quantity ?? 0) > 0 ? 'in stock' : 'out of stock'
+                  const displayPrice = getCurrentDisplayPrice(p)
 
-                return (
-                  <TableRow key={p.id}>
-                    {/* Image */}
-                    <TableCell>
-                      {p.image_url ? (
-                        <img
-                          src={p.image_url}
-                          alt={p.title ?? 'Produit'}
-                          className="h-10 w-10 rounded-md object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-10 w-10 items-center justify-center rounded-md bg-muted">
-                          <Package className="h-5 w-5 text-muted-foreground opacity-50" />
-                        </div>
-                      )}
-                    </TableCell>
-                    {/* Title */}
-                    <TableCell className="font-medium text-foreground">
-                      {p.title || '—'}
-                    </TableCell>
-                    {/* Availability */}
-                    <TableCell className="hidden sm:table-cell">
-                      <span
-                        className={
-                          effectiveAvailability === 'in stock'
-                            ? 'inline-flex items-center rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-400'
-                            : 'inline-flex items-center rounded-full bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-400'
-                        }
-                      >
-                        {effectiveAvailability}
-                      </span>
-                    </TableCell>
-                    {/* Quantity */}
-                    <TableCell className="text-right tabular-nums">
-                      {p.quantity != null ? p.quantity.toLocaleString('fr-FR') : '—'}
-                    </TableCell>
-                    {/* Current price */}
-                    <TableCell className="text-right tabular-nums">
-                      {displayPrice != null
-                        ? Number(displayPrice).toLocaleString('fr-FR', {
-                          style: 'currency',
-                          currency: p.currency || defaultCurrency || account?.default_currency || 'USD',
-                          minimumFractionDigits: 2,
-                        })
-                        : '—'}
-                    </TableCell>
-                    {/* Actions */}
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <button
-                              type="button"
-                              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                            />
+                  return (
+                    <TableRow key={p.id}>
+                      {/* Image */}
+                      <TableCell>
+                        {p.image_url ? (
+                          <img
+                            src={p.image_url}
+                            alt={p.title ?? 'Produit'}
+                            className="h-10 w-10 rounded-md object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-10 w-10 items-center justify-center rounded-md bg-muted">
+                            <Package className="h-5 w-5 text-muted-foreground opacity-50" />
+                          </div>
+                        )}
+                      </TableCell>
+                      {/* Title */}
+                      <TableCell className="font-medium text-foreground">
+                        {p.title || '—'}
+                      </TableCell>
+                      {/* Availability */}
+                      <TableCell className="hidden sm:table-cell">
+                        <span
+                          className={
+                            effectiveAvailability === 'in stock'
+                              ? 'inline-flex items-center rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-400'
+                              : 'inline-flex items-center rounded-full bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-400'
                           }
                         >
-                          <MoreHorizontal className="h-4 w-4" />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="min-w-36 bg-popover text-popover-foreground ring-border">
-                          <DropdownMenuItem onClick={() => openEditModal(p)}>
-                            <Pencil className="mr-2 h-4 w-4" />
-                            Modifier
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            onClick={() => setDeleteTarget(p)}
-                            className="text-red-400 focus:text-red-400"
+                          {effectiveAvailability}
+                        </span>
+                      </TableCell>
+                      {/* Quantity */}
+                      <TableCell className="text-right tabular-nums">
+                        {p.quantity != null ? p.quantity.toLocaleString('fr-FR') : '—'}
+                      </TableCell>
+                      {/* Current price */}
+                      <TableCell className="text-right tabular-nums">
+                        {displayPrice != null
+                          ? Number(displayPrice).toLocaleString('fr-FR', {
+                            style: 'currency',
+                            currency: p.currency || defaultCurrency || account?.default_currency || 'USD',
+                            minimumFractionDigits: 2,
+                          })
+                          : '—'}
+                      </TableCell>
+                      {/* Last updated */}
+                      <TableCell className="hidden md:table-cell whitespace-nowrap text-sm text-muted-foreground">
+                        {p.updated_at
+                          ? new Date(p.updated_at).toLocaleString('fr-FR', {
+                            day: '2-digit',
+                            month: 'short',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                          : '—'}
+                      </TableCell>
+                      {/* Actions */}
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <button
+                                type="button"
+                                className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                              />
+                            }
                           >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Supprimer
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                )
-              })
-            )}
-          </TableBody>
-        </Table>
+                            <MoreHorizontal className="h-4 w-4" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-36 bg-popover text-popover-foreground ring-border">
+                            <DropdownMenuItem onClick={() => openEditModal(p)}>
+                              <Pencil className="mr-2 h-4 w-4" />
+                              Modifier
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => setDeleteTarget(p)}
+                              className="text-red-400 focus:text-red-400"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Supprimer
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
 
         {/* Pagination */}
-        {totalCount > PAGE_SIZE && (
-          <div className="flex items-center justify-between border-t border-border px-4 py-3">
+        <div className="flex items-center justify-between border-t border-border px-4 py-3">
+          <p className="text-sm text-muted-foreground">
+            {totalCount} produit{totalCount > 1 ? 's' : ''} au total
+          </p>
+          <div className="flex items-center gap-4">
             <p className="text-sm text-muted-foreground">
-              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} sur{' '}
-              {totalCount}
+              Page {page + 1} sur {totalPages}
             </p>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+            </select>
             <div className="flex gap-1">
-              <Button
-                variant="outline"
-                size="icon-sm"
-                disabled={!canPrev}
-                onClick={() => setPage((p) => p - 1)}
-              >
+              <Button variant="outline" size="icon-sm" disabled={!canPrev} onClick={() => setPage((p) => p - 1)}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <Button
-                variant="outline"
-                size="icon-sm"
-                disabled={!canNext}
-                onClick={() => setPage((p) => p + 1)}
-              >
+              <Button variant="outline" size="icon-sm" disabled={!canNext} onClick={() => setPage((p) => p + 1)}>
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
           </div>
-        )}
+        </div>
       </div>
 
       {/* ----------------------------------------------------------- */}
@@ -1847,6 +1861,6 @@ export default function ProduitsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </div >
   )
 }

@@ -167,7 +167,7 @@ export default function AutomationsPage() {
             {t("subtitle")}
           </p>
         </div>
-        <GatedButton
+        {/* <GatedButton
           canAct={canCreate}
           gateReason="create automations"
           onClick={() => router.push("/automations/new")}
@@ -175,7 +175,7 @@ export default function AutomationsPage() {
         >
           <Plus className="h-4 w-4" />
           {t("create")}
-        </GatedButton>
+        </GatedButton> */}
       </div>
 
       {showTemplates && (
