@@ -122,7 +122,7 @@ const EMPTY_ORDER_FORM: OrderFormState = {
   contactName: '',
   items: [makeEmptyLineItem()],
   payment_status: 'pending',
-  createdAt: new Date().toISOString().slice(0, 16),
+  createdAt: toLocalInputValue(new Date()),
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +204,11 @@ function groupByOrder(items: RawItem[]): OrderGroup[] {
       },
     ],
   }))
+}
+
+// <input type="datetime-local"> attend l'heure locale ; toISOString() donnerait l'UTC
+function toLocalInputValue(date: Date) {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
 }
 
 function fmtCurrency(val: number) {
@@ -371,7 +376,7 @@ export default function CommandesPage() {
         },
       ],
       payment_status: item.orders?.payment_status ?? 'pending',
-      createdAt: item.orders?.created_at ? new Date(item.orders.created_at).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16),
+      createdAt: toLocalInputValue(item.orders?.created_at ? new Date(item.orders.created_at) : new Date()),
     })
     setFormOpen(true)
   }
@@ -467,7 +472,6 @@ export default function CommandesPage() {
 
     // Résoudre chaque ligne : produit + prix unitaire (avec promo éventuelle) + sous-total
     const resolvedItems: { produit_id: string; quantity: number; item_price: number }[] = []
-    let total = 0
 
     for (const item of validItems) {
       const product = products.find((p) => p.id === item.productId)
@@ -477,7 +481,6 @@ export default function CommandesPage() {
       }
       const quantity = Number(item.quantity)
       const unitPrice = getUnitPrice(product, createdAt)
-      total += unitPrice * quantity
       resolvedItems.push({ produit_id: product.id, quantity, item_price: unitPrice })
     }
 
@@ -500,7 +503,11 @@ export default function CommandesPage() {
         .from('orders')
         .update({ payment_status: formData.payment_status || 'pending', created_at: createdAt })
         .eq('id', order.order_id)
-      if (headerError) throw headerError
+      // La commande et le stock sont déjà enregistrés : ne pas inviter à recréer la commande
+      if (headerError) {
+        console.error('Order header update error:', headerError)
+        toast.warning('Commande créée, mais statut de paiement / date non enregistrés')
+      }
 
       if (order.has_oversold_items) {
         toast.warning('Commande créée en « à vérifier » : stock insuffisant, aucun stock réservé')
@@ -816,6 +823,9 @@ export default function CommandesPage() {
               >
                 <option value="pending">En attente</option>
                 <option value="paid">Payé</option>
+                <option value="failed">Échoué</option>
+                <option value="canceled">Annulé</option>
+                <option value="error">Erreur</option>
               </select>
             </div>
 

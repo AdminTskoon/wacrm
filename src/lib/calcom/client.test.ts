@@ -74,6 +74,14 @@ describe("bookings", () => {
     });
   });
 
+  it("fails when Cal.com answers without a booking uid", async () => {
+    responses.push({ status: 201, body: { data: {} } });
+
+    const res = await rescheduleCalcomBooking("old-uid", { start: "2026-11-02T10:00:00Z" });
+
+    expect(res).toEqual({ ok: false, error: "Réponse Cal.com sans uid de réservation" });
+  });
+
   it("treats a 404 on cancel as already cancelled", async () => {
     responses.push({ status: 404, body: { message: "not found" } });
 

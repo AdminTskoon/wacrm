@@ -51,7 +51,7 @@ type Json = Record<string, unknown>;
 export function slugify(text: string): string {
   return text
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
@@ -194,14 +194,20 @@ export async function syncCalcomEventType(
     : res;
 }
 
-function toBooking(raw: unknown, fallbackStart: string): CalcomBooking {
+function toBooking(raw: unknown, fallbackStart: string): Result<{ booking: CalcomBooking }> {
   const b = (raw ?? {}) as Json;
+  const uid = String(b.uid ?? b.id ?? '');
+  // Sans uid, la réservation est introuvable ensuite (report, annulation, webhook)
+  if (!uid) return { ok: false, error: 'Réponse Cal.com sans uid de réservation' };
   return {
-    id: b.id as number | string | undefined,
-    uid: String(b.uid ?? b.id ?? ''),
-    startTime: String(b.start ?? b.startTime ?? fallbackStart),
-    endTime: (b.end ?? b.endTime) as string | undefined,
-    status: String(b.status ?? 'accepted'),
+    ok: true,
+    booking: {
+      id: b.id as number | string | undefined,
+      uid,
+      startTime: String(b.start ?? b.startTime ?? fallbackStart),
+      endTime: (b.end ?? b.endTime) as string | undefined,
+      status: String(b.status ?? 'accepted'),
+    },
   };
 }
 
@@ -250,7 +256,7 @@ export async function createCalcomBooking(
     },
     ...(input.metadata ? { metadata: input.metadata } : {}),
   });
-  return res.ok ? { ok: true, booking: toBooking(res.data, input.start) } : res;
+  return res.ok ? toBooking(res.data, input.start) : res;
 }
 
 /** Cal.com issues a new uid for the rescheduled booking. */
@@ -262,7 +268,7 @@ export async function rescheduleCalcomBooking(
     start: input.start,
     reschedulingReason: input.reason || 'Déplacement du rendez-vous',
   });
-  return res.ok ? { ok: true, booking: toBooking(res.data, input.start) } : res;
+  return res.ok ? toBooking(res.data, input.start) : res;
 }
 
 export async function cancelCalcomBooking(

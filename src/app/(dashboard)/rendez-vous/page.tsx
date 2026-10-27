@@ -724,6 +724,7 @@ export default function RendezVousPage() {
 
     setSaving(true)
     let calcomUid: string | null = null
+    let rescheduledUid: string | null = null
     try {
       // ---- Vérification des conflits ----
       if (formData.booking_kind === 'service') {
@@ -852,11 +853,14 @@ export default function RendezVousPage() {
         editingRdv.status !== 'cancelled' &&
         new Date(editingRdv.start_time).getTime() !== startTimeObj.getTime()
       ) {
-        await calcomBookings('PATCH', {
+        const moved = await calcomBookings('PATCH', {
           uid: editingRdv.cal_booking_uid,
           start: startTimeObj.toISOString(),
         })
+        // Cal.com émet un nouvel uid : on le garde, sinon annulation/report suivants visent l'ancien
+        rescheduledUid = moved.booking?.uid || null
       }
+      const uidToStore = calcomUid ?? rescheduledUid ?? editingRdv?.cal_booking_uid ?? null
 
       // ---- 1. Écriture dans service_bookings ----
       const sbPayload: Record<string, unknown> = {
@@ -902,7 +906,7 @@ export default function RendezVousPage() {
         attendee_name: contact?.name ?? null,
         attendee_phone: contact?.phone ?? null,
         // Colonne lue par le webhook Cal.com (n8n) pour retrouver ce RDV
-        ...(calcomUid ? { cal_booking_uid: calcomUid } : {}),
+        ...(uidToStore ? { cal_booking_uid: uidToStore } : {}),
         raw_payload: (() => {
           const base =
             editingRdv?.raw_payload && typeof editingRdv.raw_payload === 'object'
@@ -948,6 +952,10 @@ export default function RendezVousPage() {
       if (calcomUid) {
         await calcomBookings('DELETE', { uid: calcomUid, reason: 'Échec enregistrement WA-CRM' }).catch(() => null)
       }
+      // Report déjà fait dans Cal.com mais pas en base : on remet l'ancien horaire
+      if (rescheduledUid && editingRdv) {
+        await calcomBookings('PATCH', { uid: rescheduledUid, start: editingRdv.start_time }).catch(() => null)
+      }
       toast.error((err as Error)?.message || 'Erreur lors de la sauvegarde du rendez-vous')
     } finally {
       setSaving(false)
@@ -957,6 +965,17 @@ export default function RendezVousPage() {
   // -------------------------------------------------------------------
   // Delete / Confirm / Cancel (répercutés sur bookings ET service_bookings)
   // -------------------------------------------------------------------
+
+  // Étapes secondaires d'une annulation/suppression : un échec ne doit pas bloquer
+  // l'action principale, mais l'utilisateur doit savoir ce qui reste à faire.
+  async function bestEffort(step: () => Promise<unknown>, warning: string) {
+    try {
+      await step()
+    } catch (err) {
+      console.error(warning, err)
+      toast.warning(`${warning} : ${err instanceof Error ? err.message : 'erreur inconnue'}`)
+    }
+  }
 
   // Le créneau est libéré en passant le service_booking à 'cancelled' :
   // la RLS n'autorise pas DELETE sur service_bookings.
@@ -980,8 +999,7 @@ export default function RendezVousPage() {
     setDeleting(true)
 
     try {
-      await cancelInCalcom(deleteTarget)
-
+      // Base d'abord : un agent (refusé par la RLS) ne doit pas annuler le RDV chez Cal.com
       const { error, count } = await supabase
         .from('bookings')
         .delete({ count: 'exact' })
@@ -989,7 +1007,8 @@ export default function RendezVousPage() {
       if (error) throw error
       if (!count) throw new Error('Suppression refusée : réservée aux administrateurs')
 
-      await releaseSlot(deleteTarget)
+      await bestEffort(() => releaseSlot(deleteTarget), 'Créneau toujours réservé')
+      await bestEffort(() => cancelInCalcom(deleteTarget), 'RDV à annuler manuellement dans Cal.com')
 
       toast.success('Rendez-vous supprimé')
       setDeleteTarget(null)
@@ -1004,8 +1023,6 @@ export default function RendezVousPage() {
 
   async function setStatus(rdv: RdvItem, status: 'confirmed' | 'cancelled') {
     try {
-      if (status === 'cancelled') await cancelInCalcom(rdv)
-
       const { error } = await supabase
         .from('bookings')
         .update({ status, updated_at: new Date().toISOString() })
@@ -1013,7 +1030,8 @@ export default function RendezVousPage() {
       if (error) throw error
 
       if (status === 'cancelled') {
-        await releaseSlot(rdv)
+        await bestEffort(() => releaseSlot(rdv), 'Créneau toujours réservé')
+        await bestEffort(() => cancelInCalcom(rdv), 'RDV à annuler manuellement dans Cal.com')
       } else if (rdv.service_booking_id) {
         const { error: sbError } = await supabase
           .from('service_bookings')
