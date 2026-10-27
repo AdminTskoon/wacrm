@@ -235,9 +235,9 @@ export default function ServicesPage() {
       const { publicUrl } = await uploadAccountMedia('chat-media', file)
       setField('image_url', publicUrl)
       toast.success('Photo téléversée avec succès')
-    } catch (err: any) {
+    } catch (err) {
       console.error('Erreur upload photo:', err)
-      toast.error(err?.message || 'Erreur lors du téléversement de la photo')
+      toast.error((err as Error)?.message || 'Erreur lors du téléversement de la photo')
     } finally {
       setUploadingImage(false)
       e.target.value = ''
@@ -307,7 +307,7 @@ export default function ServicesPage() {
     setSaving(true)
     try {
       let resolvedSlug = formData.cal_event_slug.trim()
-      let resolvedUsername = formData.cal_username.trim() || calcomStatus?.username || 'GASy'
+      let resolvedUsername = formData.cal_username.trim() || calcomStatus?.username || ''
 
       // Synchronisation avec Cal.com si activée
       if (formData.sync_calcom) {
@@ -397,10 +397,10 @@ export default function ServicesPage() {
       setFormData(EMPTY_FORM)
       await fetchServices()
       void fetchCalcomStatus()
-    } catch (error: any) {
+    } catch (error) {
       console.error('Service save error:', error)
       const errText =
-        typeof error?.message === 'string'
+        error instanceof Error
           ? error.message
           : typeof error === 'string'
             ? error
@@ -420,36 +420,40 @@ export default function ServicesPage() {
     if (!deleteTarget || !accountId) return
     setDeleting(true)
     try {
-      // 1. Cal.com d'abord (si le service y est lié)
-      if (deleteTarget.cal_event_slug) {
-        const res = await fetch('/api/calcom/event-types', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ slug: deleteTarget.cal_event_slug }),
-        })
-        const data = await res.json().catch(() => null)
-        if (!res.ok || !data?.ok) {
-          throw new Error(
-            typeof data?.error === 'string' ? data.error : 'Suppression dans Cal.com impossible'
-          )
-        }
-      }
-
-      // 2. Puis Supabase
-      const { error } = await supabase
+      // 1. Base d'abord : la RLS réserve la suppression aux admins, on vérifie
+      //    qu'une ligne est bien partie avant de toucher à Cal.com.
+      const { error, count } = await supabase
         .from('services')
-        .delete()
+        .delete({ count: 'exact' })
         .eq('id', deleteTarget.id)
         .eq('account_id', accountId)
       if (error) throw error
+      if (!count) throw new Error('Suppression refusée : réservée aux administrateurs')
+
+      // 2. Puis l'event type Cal.com, sauf s'il sert encore à un autre service
+      const slug = deleteTarget.cal_event_slug
+      const stillUsed = slug && services.some((s) => s.id !== deleteTarget.id && s.cal_event_slug === slug)
+      if (slug && !stillUsed) {
+        const res = await fetch('/api/calcom/event-types', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slug }),
+        })
+        const data = await res.json().catch(() => null)
+        if (!res.ok || !data?.ok) {
+          toast.error(
+            `Service supprimé, mais pas l'événement Cal.com : ${typeof data?.error === 'string' ? data.error : res.statusText}`
+          )
+        }
+      }
 
       toast.success('Service supprimé')
       setDeleteTarget(null)
       await fetchServices()
       void fetchCalcomStatus()
-    } catch (error: any) {
+    } catch (error) {
       console.error('Service delete error:', error)
-      toast.error(error?.message || 'Erreur lors de la suppression')
+      toast.error((error as Error)?.message || 'Erreur lors de la suppression')
     } finally {
       setDeleting(false)
     }
@@ -469,9 +473,9 @@ export default function ServicesPage() {
 
       toast.success(nextValue ? 'Service activé' : 'Service désactivé')
       await fetchServices()
-    } catch (error: any) {
+    } catch (error) {
       console.error('Service toggle error:', error)
-      toast.error(error?.message || 'Erreur lors du changement de statut')
+      toast.error((error as Error)?.message || 'Erreur lors du changement de statut')
     } finally {
       setTogglingId(null)
     }
@@ -845,7 +849,7 @@ export default function ServicesPage() {
                         <span className="text-sm font-medium text-foreground">
                           Sélectionner une photo depuis un fichier
                         </span>
-                        <span className="text-xs text-muted-foreground">PNG, JPG, WEBP jusqu'à 16 Mo</span>
+                        <span className="text-xs text-muted-foreground">PNG, JPG, WEBP jusqu’à 16 Mo</span>
                       </div>
                     )}
                     <input
@@ -903,7 +907,7 @@ export default function ServicesPage() {
 
               {!calcomStatus?.configured && (
                 <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-500/10 p-2.5 rounded-lg border border-amber-500/20">
-                  ℹ️ Clé API Cal.com non encore renseignée dans <code>.env.local</code> (<code>CAL_API_KEY</code>). Dès que vous collez votre clé, la synchronisation s'activera automatiquement.
+                  ℹ️ Clé API Cal.com non encore renseignée dans <code>.env.local</code> (<code>CAL_API_KEY</code>). Dès que vous collez votre clé, la synchronisation s’activera automatiquement.
                 </p>
               )}
 
@@ -960,7 +964,7 @@ export default function ServicesPage() {
 
                 <div className="space-y-1">
                   <Label htmlFor="service-cal-username" className="text-xs">
-                    Cal.com Nom d'utilisateur
+                    Cal.com Nom d’utilisateur
                   </Label>
                   <Input
                     id="service-cal-username"
@@ -1034,24 +1038,4 @@ export default function ServicesPage() {
       </Dialog>
     </div>
   )
-}
-
-// Version "en direct" : garde le tiret final pendant la saisie
-function slugifyLive(value: string) {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '') // retire les accents
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-') // espaces et caractères spéciaux → tiret
-    .replace(/^-+/, '')
-}
-
-function slugify(value: string) {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '') // retire les accents
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-') // espaces et symboles → tiret
-    .replace(/^-+|-+$/g, '')
 }
