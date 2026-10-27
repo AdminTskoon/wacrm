@@ -35,7 +35,7 @@ export interface ParseProductCsvResult {
 /** Parse a numeric cell, tolerating comma decimals and stray spaces. */
 function parseNumericCell(value: string | undefined): number | undefined {
   if (!value?.trim()) return undefined;
-  const normalized = value.replace(/["']/g, '').trim().replace(',', '.');
+  const normalized = value.replace(/[\s\u00a0\u202f]/g, '').replace(',', '.');
   const num = Number(normalized);
   return Number.isFinite(num) ? num : undefined;
 }
@@ -113,8 +113,8 @@ export function parseProductCsv(text: string): ParseProductCsvResult {
     if (!line) continue;
 
     const values = parseCsvLine(line, delimiter);
-    const title = values[titleIdx]?.replace(/["']/g, '').trim();
-    const brand = values[brandIdx]?.replace(/["']/g, '').trim();
+    const title = values[titleIdx]?.trim();
+    const brand = values[brandIdx]?.trim();
     if (!title || !brand) continue;
 
     rows.push({
@@ -122,22 +122,22 @@ export function parseProductCsv(text: string): ParseProductCsvResult {
       brand,
       availability:
         availabilityIdx >= 0
-          ? values[availabilityIdx]?.replace(/["']/g, '').trim() || undefined
+          ? values[availabilityIdx]?.trim() || undefined
           : undefined,
       price: priceIdx >= 0 ? parseNumericCell(values[priceIdx]) : undefined,
       quantity:
         quantityIdx >= 0 ? parseNumericCell(values[quantityIdx]) : undefined,
       image:
         imageIdx >= 0
-          ? values[imageIdx]?.replace(/["']/g, '').trim() || undefined
+          ? values[imageIdx]?.trim() || undefined
           : undefined,
       url:
         urlIdx >= 0
-          ? values[urlIdx]?.replace(/["']/g, '').trim() || undefined
+          ? values[urlIdx]?.trim() || undefined
           : undefined,
       description:
         descIdx >= 0
-          ? values[descIdx]?.replace(/["']/g, '').trim() || undefined
+          ? values[descIdx]?.trim() || undefined
           : undefined,
     });
   }
@@ -153,7 +153,8 @@ export function parseProductCsv(text: string): ParseProductCsvResult {
   };
 }
 
-/** Simple CSV line parse (handles quoted fields and escaped quotes). */
+/** Simple CSV line parse (handles quoted fields and escaped quotes).
+ * shortcut: no line breaks inside quoted fields; use a CSV library if exports need them. */
 function parseCsvLine(line: string, delimiter: string = ','): string[] {
   const values: string[] = [];
   let current = '';

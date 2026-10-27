@@ -315,7 +315,7 @@ export default function ProduitsPage() {
         console.error('Erreur chargement google_product_categories (niveau 1):', error)
       }
 
-      const unique = [...new Set((data ?? []).map((d: any) => d.level_1).filter(Boolean))]
+      const unique = [...new Set((data ?? []).map((d) => d.level_1).filter(Boolean))]
       setGpcLevel1Options(unique)
     }
     fetchLevel1()
@@ -335,7 +335,7 @@ export default function ProduitsPage() {
         console.error('Erreur chargement google_product_categories (niveau 2):', error)
       }
 
-      const unique = [...new Set((data ?? []).map((d: any) => d.level_2).filter(Boolean))]
+      const unique = [...new Set((data ?? []).map((d) => d.level_2).filter(Boolean))]
       setGpcLevel2Options(unique)
       setGpcLevel2('')
       if (unique.length === 0) {
@@ -360,7 +360,7 @@ export default function ProduitsPage() {
         console.error('Erreur chargement google_product_categories (niveau 3):', error)
       }
 
-      const opts = (data ?? []).map((d: any) => ({
+      const opts = (data ?? []).map((d) => ({
         label: d.level_3,
         full_path: d.full_path
       }))
@@ -379,14 +379,15 @@ export default function ProduitsPage() {
       const { data, error } = await supabase
         .from('fb_product_categories')
         .select('level_1')
-        .not('level_1', 'is', null)
+        // Une ligne par catégorie racine : évite la troncature à 1000 lignes de PostgREST
+        .is('level_2', null)
         .order('level_1')
 
       if (error) {
         console.error('Erreur chargement fb_product_categories (niveau 1):', error)
       }
 
-      const unique = [...new Set((data ?? []).map((d: any) => d.level_1).filter(Boolean))]
+      const unique = [...new Set((data ?? []).map((d) => d.level_1).filter(Boolean))]
       setFbpcLevel1Options(unique)
     }
     fetchLevel1()
@@ -400,13 +401,14 @@ export default function ProduitsPage() {
         .select('level_2')
         .eq('level_1', fbpcLevel1)
         .not('level_2', 'is', null)
+        .is('level_3', null) // une ligne par sous-catégorie (« sporting goods » dépasse 1000 lignes)
         .order('level_2')
 
       if (error) {
         console.error('Erreur chargement fb_product_categories (niveau 2):', error)
       }
 
-      const unique = [...new Set((data ?? []).map((d: any) => d.level_2).filter(Boolean))]
+      const unique = [...new Set((data ?? []).map((d) => d.level_2).filter(Boolean))]
       setFbpcLevel2Options(unique)
       setFbpcLevel2('')
       if (unique.length === 0) {
@@ -431,7 +433,7 @@ export default function ProduitsPage() {
         console.error('Erreur chargement fb_product_categories (niveau 3):', error)
       }
 
-      const opts = (data ?? []).map((d: any) => ({
+      const opts = (data ?? []).map((d) => ({
         label: d.level_3,
         full_path: d.full_path
       }))
@@ -528,9 +530,9 @@ export default function ProduitsPage() {
       const { publicUrl } = await uploadAccountMedia('chat-media', file)
       setField('image_url', publicUrl)
       toast.success('Photo téléversée avec succès')
-    } catch (err: any) {
+    } catch (err) {
       console.error('Erreur upload photo:', err)
-      toast.error(err?.message || 'Erreur lors du téléversement de la photo')
+      toast.error((err as Error)?.message || 'Erreur lors du téléversement de la photo')
     } finally {
       setUploadingImage(false)
       e.target.value = ''
@@ -551,9 +553,9 @@ export default function ProduitsPage() {
       const { publicUrl } = await uploadAccountMedia('chat-media', file)
       setField('url', publicUrl)
       toast.success('Image pour l\'URL produit téléversée avec succès')
-    } catch (err: any) {
+    } catch (err) {
       console.error('Erreur upload fichier url:', err)
-      toast.error(err?.message || 'Erreur lors du téléversement du fichier')
+      toast.error((err as Error)?.message || 'Erreur lors du téléversement du fichier')
     } finally {
       setUploadingUrl(false)
       e.target.value = ''
@@ -1138,7 +1140,7 @@ export default function ProduitsPage() {
                             <span className="text-sm font-medium text-foreground">
                               Sélectionner une photo depuis un fichier
                             </span>
-                            <span className="text-xs text-muted-foreground">PNG, JPG, WEBP jusqu'à 16 Mo</span>
+                            <span className="text-xs text-muted-foreground">PNG, JPG, WEBP jusqu’à 16 Mo</span>
                           </div>
                         )}
                         <input
@@ -1229,9 +1231,9 @@ export default function ProduitsPage() {
                           <div className="flex flex-col items-center gap-1.5 text-center">
                             <Upload className="h-6 w-6 text-muted-foreground" />
                             <span className="text-sm font-medium text-foreground">
-                              Sélectionner une image pour l'URL du produit
+                              Sélectionner une image pour l’URL du produit
                             </span>
-                            <span className="text-xs text-muted-foreground">PNG, JPG, WEBP jusqu'à 16 Mo</span>
+                            <span className="text-xs text-muted-foreground">PNG, JPG, WEBP jusqu’à 16 Mo</span>
                           </div>
                         )}
                         <input
@@ -1596,7 +1598,7 @@ export default function ProduitsPage() {
                   </div>
                 </div>
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="f-item-group">ID groupe d'articles</Label>
+                  <Label htmlFor="f-item-group">ID groupe d’articles</Label>
                   <Input
                     id="f-item-group"
                     placeholder="item_group_id"
@@ -1627,7 +1629,7 @@ export default function ProduitsPage() {
                     </select>
                   </div>
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-age-group">Groupe d'âge</Label>
+                    <Label htmlFor="f-age-group">Groupe d’âge</Label>
                     <select
                       id="f-age-group"
                       value={formData.age_group}
@@ -1756,7 +1758,7 @@ export default function ProduitsPage() {
               <section className="flex flex-col gap-3">
                 <SectionTitle>Offre</SectionTitle>
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="f-disclaimer">Mention légale de l'offre</Label>
+                  <Label htmlFor="f-disclaimer">Mention légale de l’offre</Label>
                   <Input
                     id="f-disclaimer"
                     placeholder="Texte de mention…"
