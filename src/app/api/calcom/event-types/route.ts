@@ -100,7 +100,8 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    await requireRole('agent');
+    // Supprimer un event type = supprimer un service : réservé aux admins (cf. RLS services_delete)
+    await requireRole('admin');
 
     const body = (await request.json().catch(() => null)) as { slug?: string } | null;
     const slug = body?.slug?.trim();

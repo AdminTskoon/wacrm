@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
-import { createCalcomBooking, cancelCalcomBooking } from '@/lib/calcom/client';
+import { createCalcomBooking, cancelCalcomBooking, rescheduleCalcomBooking } from '@/lib/calcom/client';
 
 // Cal.com attend un numéro au format international (+...)
 function toE164(raw?: string) {
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
   }
 }
 
-// Annulation (utilisée pour le rollback si l'enregistrement en base échoue)
+// Annulation (annulation/suppression d'un RDV, et rollback si l'enregistrement en base échoue)
 export async function DELETE(request: Request) {
   try {
     await requireRole('agent');
@@ -70,6 +70,26 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ ok: false, error: result.error }, { status: 400 });
     }
     return NextResponse.json({ ok: true });
+  } catch (error) {
+    return toErrorResponse(error);
+  }
+}
+
+// Report : Cal.com renvoie un nouvel uid (le webhook n8n met ensuite bookings à jour via l'ancien)
+export async function PATCH(request: Request) {
+  try {
+    await requireRole('agent');
+
+    const body = (await request.json().catch(() => null)) as { uid?: string; start?: string } | null;
+    if (!body?.uid || !body.start || Number.isNaN(Date.parse(body.start))) {
+      return NextResponse.json({ ok: false, error: 'uid et date de début valides requis' }, { status: 400 });
+    }
+
+    const result = await rescheduleCalcomBooking(body.uid, { start: body.start });
+    if (!result.ok) {
+      return NextResponse.json({ ok: false, error: result.error }, { status: 400 });
+    }
+    return NextResponse.json({ ok: true, booking: result.booking });
   } catch (error) {
     return toErrorResponse(error);
   }
