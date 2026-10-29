@@ -100,6 +100,7 @@ export function WhatsAppConfig() {
 
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [wabaId, setWabaId] = useState('');
+  const [catalogId, setCatalogId] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [verifyToken, setVerifyToken] = useState('');
   const [pin, setPin] = useState('');
@@ -163,6 +164,7 @@ export function WhatsAppConfig() {
         setConfig(data);
         setPhoneNumberId(data.phone_number_id || '');
         setWabaId(data.waba_id || '');
+        setCatalogId(data.catalog_id || '');
         setAccessToken(MASKED_TOKEN);
         // Same treatment as the access token: the row carries the encrypted
         // value, which is enough to know one exists. Show a mask instead of
@@ -178,6 +180,7 @@ export function WhatsAppConfig() {
         setConfig(null);
         setPhoneNumberId('');
         setWabaId('');
+        setCatalogId('');
         setAccessToken('');
         setVerifyToken('');
         setPin('');
@@ -279,6 +282,10 @@ export function WhatsAppConfig() {
       toast.error(t('wabaIdNotNumeric'));
       return;
     }
+    if (catalogId.trim() && !META_ID_RE.test(catalogId.trim())) {
+      toast.error(t('catalogIdNotNumeric'));
+      return;
+    }
     if (!config && (!accessToken.trim() || !tokenEdited)) {
       toast.error(t('accessTokenRequired'));
       return;
@@ -294,6 +301,7 @@ export function WhatsAppConfig() {
       const payload: Record<string, unknown> = {
         phone_number_id: phoneNumberId.trim(),
         waba_id: wabaId.trim() || null,
+        catalog_id: catalogId.trim() || null,
         // Only sent when the user actually typed one. Left out otherwise
         // (undefined is dropped from the JSON body) so the server keeps the
         // stored token instead of nulling it — see resolveVerifyTokenForSave.
@@ -467,6 +475,7 @@ export function WhatsAppConfig() {
       setConfig(null);
       setPhoneNumberId('');
       setWabaId('');
+      setCatalogId('');
       setAccessToken('');
       setVerifyToken('');
       setTokenEdited(false);
@@ -764,6 +773,16 @@ export function WhatsAppConfig() {
                 placeholder={t('wabaIdPlaceholder')}
                 value={wabaId}
                 onChange={(e) => setWabaId(e.target.value)}
+                className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-muted-foreground">{t('catalogId')}</Label>
+              <Input
+                placeholder="e.g. 100234567890789"
+                value={catalogId}
+                onChange={(e) => setCatalogId(e.target.value)}
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
               />
             </div>

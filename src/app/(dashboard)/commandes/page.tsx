@@ -60,7 +60,7 @@ interface RawItem {
     sale_price_starts_at: string | null
     sale_price_ends_at: string | null
   } | null
-  orders: { contact_name: string | null; created_at: string | null; status: string | null } | null
+  orders: { contact_name: string | null; created_at: string | null; payment_status: string | null } | null
 }
 
 /** Flat display row after normalisation */
@@ -70,7 +70,7 @@ interface DisplayRow {
   products: string
   total: number
   created_at: string | null
-  status: string | null
+  payment_status: string | null
 }
 
 /** Orders grouped by order_id for rendering */
@@ -78,13 +78,13 @@ interface OrderGroup {
   order_id: string
   contact_name: string | null
   created_at: string | null
-  status: string | null
+  payment_status: string | null
   grand_total: number
   productSummary: string
   rows: DisplayRow[]
 }
 
-const PAGE_SIZE = 50 // groups per page
+const PAGE_SIZE = 15 // groups per page
 
 interface ProductOption {
   id: string
@@ -101,20 +101,28 @@ interface ContactOption {
   phone: string | null
 }
 
-interface OrderFormState {
-  contactName: string
+interface OrderLineItem {
+  id: string // identifiant temporaire côté client, pour la key React
   productId: string
   quantity: string
-  status: string
+}
+
+interface OrderFormState {
+  contactName: string
+  items: OrderLineItem[]
+  payment_status: string
   createdAt: string
+}
+
+function makeEmptyLineItem(): OrderLineItem {
+  return { id: crypto.randomUUID(), productId: '', quantity: '1' }
 }
 
 const EMPTY_ORDER_FORM: OrderFormState = {
   contactName: '',
-  productId: '',
-  quantity: '1',
-  status: 'pending',
-  createdAt: new Date().toISOString().slice(0, 16),
+  items: [makeEmptyLineItem()],
+  payment_status: 'pending',
+  createdAt: toLocalInputValue(new Date()),
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +176,7 @@ function groupByOrder(items: RawItem[]): OrderGroup[] {
         order_id: item.order_id,
         contact_name: item.orders?.contact_name ?? null,
         created_at: item.orders?.created_at ?? null,
-        status: item.orders?.status ?? null,
+        payment_status: item.orders?.payment_status ?? null,
         grand_total: 0,
         productSummary: '',
         rows: [],
@@ -192,10 +200,15 @@ function groupByOrder(items: RawItem[]): OrderGroup[] {
         products: group.productSummary,
         total: group.grand_total,
         created_at: group.created_at,
-        status: group.status,
+        payment_status: group.payment_status,
       },
     ],
   }))
+}
+
+// <input type="datetime-local"> attend l'heure locale ; toISOString() donnerait l'UTC
+function toLocalInputValue(date: Date) {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
 }
 
 function fmtCurrency(val: number) {
@@ -220,19 +233,9 @@ function shortId(id: string) {
   return '…' + id.slice(-8)
 }
 
-function getStatusBadge(status: string | null) {
-  if (!status) return '—'
-  const s = status.toLowerCase()
-  if (s === 'pending' || s === 'en attente') {
-    return <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/20">{status}</Badge>
-  }
-  if (s === 'paid' || s === 'payé' || s === 'completed' || s === 'terminé') {
-    return <Badge variant="outline" className="bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20">{status}</Badge>
-  }
-  if (s === 'cancelled' || s === 'annulé' || s === 'failed') {
-    return <Badge variant="outline" className="bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20">{status}</Badge>
-  }
-  return <Badge variant="outline" className="text-foreground">{status}</Badge>
+function getPendingStatusBadge(payment_status: string | null) {
+  if (!payment_status) return '—'
+  return <Badge variant="outline" className="text-foreground">{payment_status}</Badge>
 }
 
 // ---------------------------------------------------------------------------
@@ -248,6 +251,7 @@ export default function CommandesPage() {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
   const [totalGroups, setTotalGroups] = useState(0)
+  const [pageSize, setPageSize] = useState(15)
   const [products, setProducts] = useState<ProductOption[]>([])
   const [contacts, setContacts] = useState<ContactOption[]>([])
   const [formOpen, setFormOpen] = useState(false)
@@ -271,6 +275,7 @@ export default function CommandesPage() {
       .from('orders')
       .select('id', { count: 'exact' })
       .eq('account_id', account.id)
+      .neq('status', 'cancelled')
       .order('created_at', { ascending: false })
 
     if (search.trim()) {
@@ -278,7 +283,7 @@ export default function CommandesPage() {
     }
 
     const { data: orderIds, error: orderErr, count } = await orderQuery
-      .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1)
+      .range(page * pageSize, page * pageSize + pageSize - 1)
 
     if (orderErr) {
       console.error('Failed to fetch orders:', orderErr)
@@ -306,7 +311,7 @@ export default function CommandesPage() {
         item_price,
         quantity,
         produits ( title, price, sale_price, sale_price_starts_at, sale_price_ends_at ),
-        orders ( contact_name, created_at, status )
+        orders ( contact_name, created_at, payment_status )
       `)
       .in('order_id', ids)
       .order('order_id', { ascending: false })
@@ -325,7 +330,7 @@ export default function CommandesPage() {
 
     setGroups(groupByOrder(sorted as unknown as RawItem[]))
     setLoading(false)
-  }, [supabase, account?.id, page, search])
+  }, [supabase, account?.id, page, search, pageSize])
 
   useEffect(() => {
     fetchCommandes()
@@ -333,7 +338,7 @@ export default function CommandesPage() {
 
   useEffect(() => {
     setPage(0)
-  }, [search])
+  }, [pageSize])
 
   useEffect(() => {
     const loadProducts = async () => {
@@ -363,12 +368,49 @@ export default function CommandesPage() {
     setEditingItem(item)
     setFormData({
       contactName: item.orders?.contact_name ?? '',
-      productId: item.produits?.title ? '' : '',
-      quantity: String(item.quantity ?? 1),
-      status: item.orders?.status ?? 'pending',
-      createdAt: item.orders?.created_at ? new Date(item.orders.created_at).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16),
+      items: [
+        {
+          id: crypto.randomUUID(),
+          productId: '', // pas d'ID produit disponible depuis cette ligne agrégée
+          quantity: String(item.quantity ?? 1),
+        },
+      ],
+      payment_status: item.orders?.payment_status ?? 'pending',
+      createdAt: toLocalInputValue(item.orders?.created_at ? new Date(item.orders.created_at) : new Date()),
     })
     setFormOpen(true)
+  }
+
+  function addLineItem() {
+    setFormData((prev) => ({ ...prev, items: [...prev.items, makeEmptyLineItem()] }))
+  }
+
+  function removeLineItem(id: string) {
+    setFormData((prev) => ({
+      ...prev,
+      items: prev.items.length > 1 ? prev.items.filter((item) => item.id !== id) : prev.items,
+    }))
+  }
+
+  function updateLineItem(id: string, field: 'productId' | 'quantity', value: string) {
+    setFormData((prev) => ({
+      ...prev,
+      items: prev.items.map((item) => (item.id === id ? { ...item, [field]: value } : item)),
+    }))
+  }
+
+  function getUnitPrice(product: ProductOption, referenceDateIso: string) {
+    const active = isSalePriceActive(
+      {
+        title: product.title,
+        price: product.price,
+        sale_price: product.sale_price,
+        sale_price_starts_at: product.sale_price_starts_at,
+        sale_price_ends_at: product.sale_price_ends_at,
+      },
+      referenceDateIso
+    )
+    return active && product.sale_price != null ? product.sale_price : (product.price ?? 0)
   }
 
   async function handleSave() {
@@ -377,72 +419,131 @@ export default function CommandesPage() {
       return
     }
 
-    if (!formData.productId) {
-      toast.error('Veuillez sélectionner un produit')
+    // Modification : seuls l'en-tête et le paiement sont éditables, les lignes
+    // (et donc le stock) ne bougent pas.
+    if (editingItem) {
+      const contact = contacts.find((c) => (c.name ?? '') === formData.contactName)
+      setSaving(true)
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          contact_name: formData.contactName.trim() || null,
+          ...(contact?.phone ? { contact_phone: contact.phone } : {}),
+          payment_status: formData.payment_status || 'pending',
+          ...(formData.createdAt ? { created_at: new Date(formData.createdAt).toISOString() } : {}),
+        })
+        .eq('id', editingItem.order_id)
+        .eq('account_id', account.id)
+      setSaving(false)
+      if (error) {
+        console.error('Order update error:', error)
+        toast.error(error.message || 'Erreur lors de la modification de la commande')
+        return
+      }
+      toast.success('Commande modifiée')
+      setFormOpen(false)
+      setEditingItem(null)
+      setFormData(EMPTY_ORDER_FORM)
+      fetchCommandes()
       return
     }
 
-    const quantity = Number(formData.quantity)
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      toast.error('La quantité doit être supérieure à 0')
+    const validItems = formData.items.filter((item) => item.productId)
+    if (validItems.length === 0) {
+      toast.error('Veuillez sélectionner au moins un produit')
       return
+    }
+
+    for (const item of validItems) {
+      const qty = Number(item.quantity)
+      if (!Number.isFinite(qty) || qty <= 0) {
+        toast.error('Chaque produit doit avoir une quantité supérieure à 0')
+        return
+      }
+    }
+
+    const selectedContact = contacts.find((c) => (c.name ?? '') === formData.contactName)
+    if (!selectedContact?.phone) {
+      toast.error('Veuillez sélectionner un contact avec un numéro de téléphone valide')
+      return
+    }
+
+    const createdAt = formData.createdAt ? new Date(formData.createdAt).toISOString() : new Date().toISOString()
+
+    // Résoudre chaque ligne : produit + prix unitaire (avec promo éventuelle) + sous-total
+    const resolvedItems: { produit_id: string; quantity: number; item_price: number }[] = []
+
+    for (const item of validItems) {
+      const product = products.find((p) => p.id === item.productId)
+      if (!product) {
+        toast.error('Un des produits sélectionnés est introuvable')
+        return
+      }
+      const quantity = Number(item.quantity)
+      const unitPrice = getUnitPrice(product, createdAt)
+      resolvedItems.push({ produit_id: product.id, quantity, item_price: unitPrice })
     }
 
     setSaving(true)
 
     try {
-      const createdAt = formData.createdAt ? new Date(formData.createdAt).toISOString() : new Date().toISOString()
-      const { data: orderData, error: orderError } = await supabase.from('orders').insert({
-        account_id: account.id,
-        contact_name: formData.contactName.trim() || null,
-        status: formData.status || 'pending',
-        created_at: createdAt,
-      }).select('id').single()
-
-      if (orderError || !orderData?.id) {
-        throw orderError ?? new Error('Impossible de créer la commande')
-      }
-
-      const { error: itemError } = await supabase.from('order_items').insert({
-        order_id: orderData.id,
-        produit_id: formData.productId,
-        quantity,
-        item_price: null,
+      // Même fonction que les commandes WhatsApp : commande + lignes + stock en une transaction.
+      const { data: created, error: rpcError } = await supabase.rpc('create_whatsapp_order', {
+        p_account_id: account.id,
+        p_contact_phone: selectedContact.phone,
+        p_contact_name: formData.contactName.trim() || null,
+        p_items: resolvedItems,
       })
-
-      if (itemError) {
-        throw itemError
+      const order = Array.isArray(created) ? created[0] : created
+      if (rpcError || !order?.order_id) {
+        throw rpcError ?? new Error('Impossible de créer la commande')
       }
 
+      const { error: headerError } = await supabase
+        .from('orders')
+        .update({ payment_status: formData.payment_status || 'pending', created_at: createdAt })
+        .eq('id', order.order_id)
+      // La commande et le stock sont déjà enregistrés : ne pas inviter à recréer la commande
+      if (headerError) {
+        console.error('Order header update error:', headerError)
+        toast.warning('Commande créée, mais statut de paiement / date non enregistrés')
+      }
+
+      if (order.has_oversold_items) {
+        toast.warning('Commande créée en « à vérifier » : stock insuffisant, aucun stock réservé')
+      }
       toast.success('Commande créée avec succès')
       setFormOpen(false)
       setFormData(EMPTY_ORDER_FORM)
       fetchCommandes()
-    } catch (error: any) {
+    } catch (error) {
       console.error('Order save error:', error)
-      toast.error(error?.message || 'Erreur lors de la sauvegarde de la commande')
+      toast.error((error as Error)?.message || 'Erreur lors de la sauvegarde de la commande')
     } finally {
       setSaving(false)
     }
   }
 
   async function handleDelete() {
-    if (!deleteTarget) return
+    if (!deleteTarget || !account?.id) return
 
     setDeleting(true)
     try {
-      const { error: itemError } = await supabase.from('order_items').delete().eq('order_id', deleteTarget.order_id)
-      if (itemError) throw itemError
+      // Annulation plutôt que suppression (pas de policy DELETE sur orders) ;
+      // cancel_order (migration 131) restitue le stock réservé en une transaction.
+      const { data: cancelled, error } = await supabase.rpc('cancel_order', {
+        p_order_id: deleteTarget.order_id,
+      })
 
-      const { error: orderError } = await supabase.from('orders').delete().eq('id', deleteTarget.order_id)
-      if (orderError) throw orderError
+      if (error) throw error
+      if (!cancelled) throw new Error('Commande déjà annulée ou inaccessible')
 
-      toast.success('Commande supprimée')
+      toast.success('Commande annulée')
       setDeleteTarget(null)
       fetchCommandes()
-    } catch (error: any) {
-      console.error('Order delete error:', error)
-      toast.error(error?.message || 'Erreur lors de la suppression')
+    } catch (error) {
+      console.error('Order cancel error:', error)
+      toast.error((error as Error)?.message || 'Erreur lors de l’annulation')
     } finally {
       setDeleting(false)
     }
@@ -452,7 +553,7 @@ export default function CommandesPage() {
   // Pagination
   // -------------------------------------------------------------------
 
-  const totalPages = Math.max(1, Math.ceil(totalGroups / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(totalGroups / pageSize))
   const canPrev = page > 0
   const canNext = page < totalPages - 1
 
@@ -488,142 +589,145 @@ export default function CommandesPage() {
       </div>
 
       {/* Table */}
-      <div className="rounded-lg border border-border bg-card flex-1 overflow-auto [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border/60 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-border/80">
-        <Table>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <TableHead className="text-foreground font-medium">ID</TableHead>
-              <TableHead className="text-foreground font-medium">Contact</TableHead>
-              <TableHead className="text-foreground font-medium">Produit</TableHead>
-              <TableHead className="text-right text-foreground font-medium">Total</TableHead>
-              <TableHead className="text-foreground font-medium">Statut</TableHead>
-              <TableHead className="text-foreground font-medium">Date</TableHead>
-            </TableRow>
-          </TableHeader>
-
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={COL_COUNT} className="h-32 text-center">
-                  <div className="flex items-center justify-center gap-2 text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Chargement…
-                  </div>
-                </TableCell>
+      <div className="rounded-lg border border-border bg-card flex-1 flex flex-col overflow-hidden min-h-0">
+        <div className="flex-1 min-h-0 [&>[data-slot=table-container]]:h-full [&>[data-slot=table-container]]:overflow-y-auto [&>[data-slot=table-container]]:[&::-webkit-scrollbar]:h-2 [&>[data-slot=table-container]]:[&::-webkit-scrollbar]:w-2 [&>[data-slot=table-container]]:[&::-webkit-scrollbar-track]:bg-transparent [&>[data-slot=table-container]]:[&::-webkit-scrollbar-thumb]:bg-border/60 [&>[data-slot=table-container]]:[&::-webkit-scrollbar-thumb]:rounded-full">
+          <Table className="border-separate border-spacing-0">
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="sticky top-0 z-10 bg-card text-foreground font-medium">ID</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card text-foreground font-medium">Contact</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card text-foreground font-medium">Produit</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card text-right text-foreground font-medium">Total</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card text-foreground font-medium">Statut</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card text-foreground font-medium">Date</TableHead>
               </TableRow>
-            ) : groups.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={COL_COUNT} className="h-32 text-center">
-                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                    <ShoppingCart className="h-8 w-8 opacity-40" />
-                    {search ? 'Aucune commande trouvée' : 'Aucune commande pour le moment'}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ) : (
-              groups.map((group) => {
-                const row = group.rows[0]
-                if (!row) return null
+            </TableHeader>
 
-                return (
-                  <TableRow key={group.order_id} className="hover:bg-muted/40">
-                    <TableCell className="font-mono text-xs text-foreground/90">
-                      <span title={row.order_id}>{shortId(row.order_id)}</span>
-                    </TableCell>
+            <TableBody>
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={COL_COUNT} className="h-32 text-center">
+                    <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Chargement…
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : groups.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={COL_COUNT} className="h-32 text-center">
+                    <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                      <ShoppingCart className="h-8 w-8 opacity-40" />
+                      {search ? 'Aucune commande trouvée' : 'Aucune commande pour le moment'}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                groups.map((group) => {
+                  const row = group.rows[0]
+                  if (!row) return null
 
-                    <TableCell className="font-medium text-foreground" title={row.contact_name || undefined}>
-                      <div className="break-words whitespace-normal">
-                        {row.contact_name || '—'}
-                      </div>
-                    </TableCell>
+                  return (
+                    <TableRow key={group.order_id} className="hover:bg-muted/40">
+                      <TableCell className="font-mono text-xs text-foreground/90">
+                        <span title={row.order_id}>{shortId(row.order_id)}</span>
+                      </TableCell>
 
-                    <TableCell className="max-w-[260px] break-words whitespace-normal text-foreground/90" title={row.products || undefined}>
-                      {row.products || '—'}
-                    </TableCell>
+                      <TableCell className="font-medium text-foreground" title={row.contact_name || undefined}>
+                        <div className="break-words whitespace-normal">
+                          {row.contact_name || '—'}
+                        </div>
+                      </TableCell>
 
-                    <TableCell className="text-right tabular-nums font-semibold text-foreground">
-                      {fmtCurrency(row.total)}
-                    </TableCell>
+                      <TableCell className="max-w-[260px] break-words whitespace-normal text-foreground/90" title={row.products || undefined}>
+                        {row.products || '—'}
+                      </TableCell>
 
-                    <TableCell className="align-middle capitalize">
-                      {getStatusBadge(row.status)}
-                    </TableCell>
+                      <TableCell className="text-right tabular-nums font-semibold text-foreground">
+                        {fmtCurrency(row.total)}
+                      </TableCell>
 
-                    <TableCell className="align-middle text-foreground font-medium">
-                      {fmtDate(row.created_at)}
-                    </TableCell>
+                      <TableCell className="align-middle capitalize">
+                        {getPendingStatusBadge(row.payment_status)}
+                      </TableCell>
 
-                    <TableCell className="w-12 text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <button
-                              type="button"
-                              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                            />
-                          }
-                        >
-                          <MoreHorizontal className="h-4 w-4" />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="min-w-36 bg-popover text-popover-foreground ring-border">
-                          <DropdownMenuItem onClick={() => openEditModal({ id: row.order_id, order_id: row.order_id, item_price: 0, quantity: 1, produits: null, orders: { contact_name: row.contact_name, created_at: row.created_at, status: row.status } } as RawItem)}>
-                            <Pencil className="mr-2 h-4 w-4" />
-                            Modifier
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => setDeleteTarget({ id: row.order_id, order_id: row.order_id, item_price: 0, quantity: 1, produits: null, orders: { contact_name: row.contact_name, created_at: row.created_at, status: row.status } } as RawItem)} className="text-red-400 focus:text-red-400">
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Supprimer
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                )
-              })
-            )}
-          </TableBody>
-        </Table>
+                      <TableCell className="align-middle text-foreground font-medium">
+                        {fmtDate(row.created_at)}
+                      </TableCell>
+
+                      <TableCell className="w-12 text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <button
+                                type="button"
+                                className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                              />
+                            }
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-36 bg-popover text-popover-foreground ring-border">
+                            <DropdownMenuItem onClick={() => openEditModal({ id: row.order_id, order_id: row.order_id, item_price: 0, quantity: 1, produits: null, orders: { contact_name: row.contact_name, created_at: row.created_at, payment_status: row.payment_status } } as RawItem)}>
+                              <Pencil className="mr-2 h-4 w-4" />
+                              Modifier
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => setDeleteTarget({ id: row.order_id, order_id: row.order_id, item_price: 0, quantity: 1, produits: null, orders: { contact_name: row.contact_name, created_at: row.created_at, payment_status: row.payment_status } } as RawItem)} className="text-red-400 focus:text-red-400">
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Annuler la commande
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
 
         {/* Pagination */}
-        {totalGroups > PAGE_SIZE && (
-          <div className="flex items-center justify-between border-t border-border px-4 py-3">
+        <div className="flex items-center justify-between border-t border-border px-4 py-3">
+          <p className="text-sm text-muted-foreground">
+            {totalGroups} commande{totalGroups > 1 ? 's' : ''} au total
+          </p>
+          <div className="flex items-center gap-4">
             <p className="text-sm text-muted-foreground">
-              Commandes {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalGroups)} sur{' '}
-              {totalGroups}
+              Page {page + 1} sur {totalPages}
             </p>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+            </select>
             <div className="flex gap-1">
-              <Button
-                variant="outline"
-                size="icon-sm"
-                disabled={!canPrev}
-                onClick={() => setPage((p) => p - 1)}
-              >
+              <Button variant="outline" size="icon-sm" disabled={!canPrev} onClick={() => setPage((p) => p - 1)}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <Button
-                variant="outline"
-                size="icon-sm"
-                disabled={!canNext}
-                onClick={() => setPage((p) => p + 1)}
-              >
+              <Button variant="outline" size="icon-sm" disabled={!canNext} onClick={() => setPage((p) => p + 1)}>
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
           </div>
-        )}
+        </div>
       </div>
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-md max-h-[90vh] flex flex-col p-0">
+          <DialogHeader className="px-6 pt-6">
             <DialogTitle>{editingItem ? 'Modifier la commande' : 'Nouvelle commande'}</DialogTitle>
             <DialogDescription>
               {editingItem ? 'Modifiez les détails de la commande.' : 'Créez une nouvelle commande avec un produit et une quantité.'}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
+          <div className="space-y-4 py-2 px-6 overflow-y-auto flex-1 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border/60 [&::-webkit-scrollbar-thumb]:rounded-full">
             <div className="space-y-2">
               <Label htmlFor="contact-name">Contact</Label>
               <div className="rounded-lg border border-input bg-muted/20 p-2">
@@ -649,48 +753,77 @@ export default function CommandesPage() {
               </div>
             </div>
 
+            {!editingItem && (
             <div className="space-y-2">
-              <Label htmlFor="product-id">Produit</Label>
-              <div className="rounded-lg border border-input bg-muted/20 p-2">
-                <select
-                  id="product-id"
-                  value={formData.productId}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, productId: e.target.value }))}
-                  className="w-full rounded-md bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="" hidden />
-                  {products.map((product) => (
-                    <option key={product.id} value={product.id}>
-                      {product.title || 'Produit sans nom'}
-                    </option>
-                  ))}
-                </select>
+              <div className="flex items-center justify-between">
+                <Label>Produits</Label>
+                <Button type="button" variant="outline" size="sm" onClick={addLineItem} className="h-7 gap-1 px-2">
+                  <Plus className="h-3.5 w-3.5" />
+                  Ajouter
+                </Button>
+              </div>
+
+              <div className="space-y-3">
+                {formData.items.map((item, index) => (
+                  <div key={item.id} className="flex items-end gap-2 rounded-lg border border-input bg-muted/20 p-2">
+                    <div className="flex-1 space-y-1">
+                      {index === 0 && <Label htmlFor={`product-${item.id}`} className="text-xs text-muted-foreground">Produit</Label>}
+                      <select
+                        id={`product-${item.id}`}
+                        value={item.productId}
+                        onChange={(e) => updateLineItem(item.id, 'productId', e.target.value)}
+                        className="w-full rounded-md bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                      >
+                        <option value="" hidden />
+                        {products.map((product) => (
+                          <option key={product.id} value={product.id}>
+                            {product.title || 'Produit sans nom'}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="w-20 space-y-1">
+                      {index === 0 && <Label htmlFor={`qty-${item.id}`} className="text-xs text-muted-foreground">Qté</Label>}
+                      <Input
+                        id={`qty-${item.id}`}
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={item.quantity}
+                        onChange={(e) => updateLineItem(item.id, 'quantity', e.target.value)}
+                      />
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => removeLineItem(item.id)}
+                      disabled={formData.items.length === 1}
+                      className="mb-0.5 text-muted-foreground hover:text-red-400"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
               </div>
             </div>
+            )}
 
             <div className="space-y-2">
-              <Label htmlFor="quantity">Quantité</Label>
-              <Input
-                id="quantity"
-                type="number"
-                min="1"
-                step="1"
-                value={formData.quantity}
-                onChange={(e) => setFormData((prev) => ({ ...prev, quantity: e.target.value }))}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="status">Statut</Label>
+              <Label htmlFor="payment_status">Statut du paiement</Label>
               <select
-                id="status"
-                value={formData.status}
-                onChange={(e) => setFormData((prev) => ({ ...prev, status: e.target.value }))}
+                id="payment_status"
+                value={formData.payment_status}
+                onChange={(e) => setFormData((prev) => ({ ...prev, payment_status: e.target.value }))}
                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 <option value="pending">En attente</option>
-                <option value="paid">Payée</option>
-                <option value="cancelled">Annulée</option>
+                <option value="paid">Payé</option>
+                <option value="failed">Échoué</option>
+                <option value="canceled">Annulé</option>
+                <option value="error">Erreur</option>
               </select>
             </div>
 
@@ -705,7 +838,7 @@ export default function CommandesPage() {
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="px-6 pb-6 pt-2 border-t border-border">
             <Button variant="outline" onClick={() => setFormOpen(false)} disabled={saving}>
               Annuler
             </Button>
@@ -719,17 +852,17 @@ export default function CommandesPage() {
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Supprimer la commande</DialogTitle>
+            <DialogTitle>Annuler la commande</DialogTitle>
             <DialogDescription>
-              Cette action supprimera la commande et l’article associé.
+              La commande passera au statut « annulée » et disparaîtra de la liste. Le stock réservé sera restitué.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
-              Annuler
+              Retour
             </Button>
             <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
-              {deleting ? 'Suppression…' : 'Supprimer'}
+              {deleting ? 'Annulation…' : 'Annuler la commande'}
             </Button>
           </DialogFooter>
         </DialogContent>

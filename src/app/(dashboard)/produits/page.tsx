@@ -42,8 +42,12 @@ import {
   ChevronLeft,
   ChevronRight,
   Tag,
-} from 'lucide-react'
-
+  Upload,
+  ImageIcon,
+} from 'lucide-react';
+import { ImportModal } from '@/components/produits/import-modal';
+import { GatedButton } from '@/components/ui/gated-button';
+import { uploadAccountMedia } from '@/lib/storage/upload-media';
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -58,6 +62,7 @@ interface Produit {
   sale_price: number | null
   sale_price_starts_at: string | null
   sale_price_ends_at: string | null
+  [key: string]: any
 }
 
 interface ProduitFormData {
@@ -70,6 +75,7 @@ interface ProduitFormData {
   // Médias & URL
   url: string
   image_url: string
+  additional_image_urls: string
   videos: string          // JSON textarea
   // Prix
   price: string
@@ -107,6 +113,8 @@ interface ProduitFormData {
   // Tags & Attributs
   product_tags: string    // comma-separated → text[]
   attributes: string      // JSON textarea
+  for_sale: string
+  for_rent: string
 }
 
 const EMPTY_FORM: ProduitFormData = {
@@ -114,9 +122,10 @@ const EMPTY_FORM: ProduitFormData = {
   external_id: '',
   title: '',
   description: '',
-  status: '',
+  status: 'active',
   url: '',
   image_url: '',
+  additional_image_urls: '',
   videos: '',
   price: '',
   currency: '',
@@ -127,7 +136,7 @@ const EMPTY_FORM: ProduitFormData = {
   booking_mode: '',
   quantity: '',
   availability: '',
-  condition: '',
+  condition: 'new',
   brand: '',
   gtin: '',
   google_product_category: '',
@@ -147,9 +156,9 @@ const EMPTY_FORM: ProduitFormData = {
   offer_disclaimer_url: '',
   product_tags: '',
   attributes: '',
+  for_sale: 'true',
+  for_rent: 'false',
 }
-
-const PAGE_SIZE = 25
 
 // ---------------------------------------------------------------------------
 // Helper — parse optional JSON textarea
@@ -217,7 +226,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 export default function ProduitsPage() {
   const supabase = createClient()
-  const { account } = useAuth()
+  const { account, canEditSettings, defaultCurrency } = useAuth()
 
   // Data
   const [produits, setProduits] = useState<Produit[]>([])
@@ -225,12 +234,16 @@ export default function ProduitsPage() {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
   const [totalCount, setTotalCount] = useState(0)
+  const [pageSize, setPageSize] = useState(15)
 
   // Modal state
+  const [importOpen, setImportOpen] = useState(false);
   const [formOpen, setFormOpen] = useState(false)
   const [editingProduit, setEditingProduit] = useState<Produit | null>(null)
   const [formData, setFormData] = useState<ProduitFormData>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
+  const [uploadingImage, setUploadingImage] = useState(false)
+  const [uploadingUrl, setUploadingUrl] = useState(false)
 
   // Delete confirmation
   const [deleteTarget, setDeleteTarget] = useState<Produit | null>(null)
@@ -239,14 +252,14 @@ export default function ProduitsPage() {
   // States pour le dropdown Google Product Category
   const [gpcLevel1Options, setGpcLevel1Options] = useState<string[]>([])
   const [gpcLevel2Options, setGpcLevel2Options] = useState<string[]>([])
-  const [gpcLevel3Options, setGpcLevel3Options] = useState<{label: string, full_path: string}[]>([])
+  const [gpcLevel3Options, setGpcLevel3Options] = useState<{ label: string, full_path: string }[]>([])
   const [gpcLevel1, setGpcLevel1] = useState('')
   const [gpcLevel2, setGpcLevel2] = useState('')
 
   // States pour le dropdown facebook Product Category
   const [fbpcLevel1Options, setFbpcLevel1Options] = useState<string[]>([])
   const [fbpcLevel2Options, setFbpcLevel2Options] = useState<string[]>([])
-  const [fbpcLevel3Options, setFbpcLevel3Options] = useState<{label: string, full_path: string}[]>([])
+  const [fbpcLevel3Options, setFbpcLevel3Options] = useState<{ label: string, full_path: string }[]>([])
   const [fbpcLevel1, setFbpcLevel1] = useState('')
   const [fbpcLevel2, setFbpcLevel2] = useState('')
 
@@ -257,12 +270,12 @@ export default function ProduitsPage() {
 
   const fetchProduits = useCallback(async () => {
     setLoading(true)
-    const from = page * PAGE_SIZE
-    const to = from + PAGE_SIZE - 1
+    const from = page * pageSize
+    const to = from + pageSize - 1
 
     let query = supabase
       .from('produits')
-      .select('id,title,availability,image_url,quantity,price,sale_price,sale_price_starts_at,sale_price_ends_at', { count: 'exact' })
+      .select('*', { count: 'exact' })
       .order('title', { ascending: true })
       .range(from, to)
 
@@ -280,7 +293,7 @@ export default function ProduitsPage() {
       setTotalCount(count ?? 0)
     }
     setLoading(false)
-  }, [supabase, page, search])
+  }, [supabase, page, search, pageSize])
 
   useEffect(() => {
     fetchProduits()
@@ -288,123 +301,151 @@ export default function ProduitsPage() {
 
   useEffect(() => {
     setPage(0)
-  }, [search])
+  }, [pageSize])
 
   useEffect(() => {
-  async function fetchLevel1() {
-    const { data } = await supabase
-      .from('google_product_categories')
-      .select('level_1')
-      .not('level_1', 'is', null)
-      .order('level_1')
-    
-    const unique = [...new Set((data ?? []).map((d: any) => d.level_1))]
-    setGpcLevel1Options(unique)
-  }
-  fetchLevel1()
-}, [supabase])
+    async function fetchLevel1() {
+      const { data, error } = await supabase
+        .from('google_product_categories')
+        .select('level_1')
+        .not('level_1', 'is', null)
+        .order('level_1')
 
-useEffect(() => {
-  if (!gpcLevel1) return
-  async function fetchLevel2() {
-    const { data } = await supabase
-      .from('google_product_categories')
-      .select('level_2')
-      .eq('level_1', gpcLevel1)
-      .not('level_2', 'is', null)
-      .order('level_2')
-    
-    const unique = [...new Set((data ?? []).map((d: any) => d.level_2))]
-    setGpcLevel2Options(unique)
-    setGpcLevel2('')
-    setField('google_product_category', '')
-  }
-  fetchLevel2()
-}, [gpcLevel1, supabase])
+      if (error) {
+        console.error('Erreur chargement google_product_categories (niveau 1):', error)
+      }
 
-useEffect(() => {
-  if (!gpcLevel1 || !gpcLevel2) return
-  async function fetchLevel3() {
-    const { data } = await supabase
-      .from('google_product_categories')
-      .select('level_3, full_path')
-      .eq('level_1', gpcLevel1)
-      .eq('level_2', gpcLevel2)
-      .not('level_3', 'is', null)
-      .order('level_3')
-    
-    const opts = (data ?? []).map((d: any) => ({
-      label: d.level_3,
-      full_path: d.full_path
-    }))
-    setGpcLevel3Options(opts)
-    // Si aucun niveau 3 → le niveau 2 est la valeur finale
-    if (opts.length === 0) {
-      setField('google_product_category', gpcLevel2)
-    } else {
-      setField('google_product_category', '')
+      const unique = [...new Set((data ?? []).map((d) => d.level_1).filter(Boolean))]
+      setGpcLevel1Options(unique)
     }
-  }
-  fetchLevel3()
-}, [gpcLevel1, gpcLevel2, supabase])
+    fetchLevel1()
+  }, [supabase])
 
-useEffect(() => {
-  async function fetchLevel1() {
-    const { data } = await supabase
-      .from('fb_product_categories')
-      .select('level_1')
-      .not('level_1', 'is', null)
-      .order('level_1')
-    
-    const unique = [...new Set((data ?? []).map((d: any) => d.level_1))]
-    setFbpcLevel1Options(unique)
-  }
-  fetchLevel1()
-}, [supabase])
+  useEffect(() => {
+    if (!gpcLevel1) return
+    async function fetchLevel2() {
+      const { data, error } = await supabase
+        .from('google_product_categories')
+        .select('level_2')
+        .eq('level_1', gpcLevel1)
+        .not('level_2', 'is', null)
+        .order('level_2')
 
-useEffect(() => {
-  if (!fbpcLevel1) return
-  async function fetchLevel2() {
-    const { data } = await supabase
-      .from('fb_product_categories')
-      .select('level_2')
-      .eq('level_1', fbpcLevel1)
-      .not('level_2', 'is', null)
-      .order('level_2')
-    
-    const unique = [...new Set((data ?? []).map((d: any) => d.level_2))]
-    setFbpcLevel2Options(unique)
-    setFbpcLevel2('')
-    setField('fb_product_category', '')
-  }
-  fetchLevel2()
-}, [fbpcLevel1, supabase])
+      if (error) {
+        console.error('Erreur chargement google_product_categories (niveau 2):', error)
+      }
 
-useEffect(() => {
-  if (!fbpcLevel1 || !fbpcLevel2) return
-  async function fetchLevel3() {
-    const { data } = await supabase
-      .from('fb_product_categories')
-      .select('level_3, full_path')
-      .eq('level_1', fbpcLevel1)
-      .eq('level_2', fbpcLevel2)
-      .not('level_3', 'is', null)
-      .order('level_3')
-    
-    const opts = (data ?? []).map((d: any) => ({
-      label: d.level_3,
-      full_path: d.full_path
-    }))
-    setFbpcLevel3Options(opts)
-    // Si aucun niveau 3 → le niveau 2 est la valeur finale
-    if (opts.length === 0) {
-      setField('fb_product_category', fbpcLevel2)
-    } else {
-      setField('fb_product_category', '')
+      const unique = [...new Set((data ?? []).map((d) => d.level_2).filter(Boolean))]
+      setGpcLevel2Options(unique)
+      setGpcLevel2('')
+      if (unique.length === 0) {
+        setField('google_product_category', gpcLevel1)
+      }
     }
-  }
-  fetchLevel3()
-}, [fbpcLevel1, fbpcLevel2, supabase])
+    fetchLevel2()
+  }, [gpcLevel1, supabase])
+
+  useEffect(() => {
+    if (!gpcLevel1 || !gpcLevel2) return
+    async function fetchLevel3() {
+      const { data, error } = await supabase
+        .from('google_product_categories')
+        .select('level_3, full_path')
+        .eq('level_1', gpcLevel1)
+        .eq('level_2', gpcLevel2)
+        .not('level_3', 'is', null)
+        .order('level_3')
+
+      if (error) {
+        console.error('Erreur chargement google_product_categories (niveau 3):', error)
+      }
+
+      const opts = (data ?? []).map((d) => ({
+        label: d.level_3,
+        full_path: d.full_path
+      }))
+      setGpcLevel3Options(opts)
+      // Si aucun niveau 3 → l'ensemble des valeurs est le chemin complet niveau 1 > niveau 2
+      if (opts.length === 0) {
+        const fullVal = (data?.[0]?.full_path) || [gpcLevel1, gpcLevel2].filter(Boolean).join(' > ')
+        setField('google_product_category', fullVal)
+      }
+    }
+    fetchLevel3()
+  }, [gpcLevel1, gpcLevel2, supabase])
+
+  useEffect(() => {
+    async function fetchLevel1() {
+      const { data, error } = await supabase
+        .from('fb_product_categories')
+        .select('level_1')
+        // Une ligne par catégorie racine : évite la troncature à 1000 lignes de PostgREST
+        .is('level_2', null)
+        .order('level_1')
+
+      if (error) {
+        console.error('Erreur chargement fb_product_categories (niveau 1):', error)
+      }
+
+      const unique = [...new Set((data ?? []).map((d) => d.level_1).filter(Boolean))]
+      setFbpcLevel1Options(unique)
+    }
+    fetchLevel1()
+  }, [supabase])
+
+  useEffect(() => {
+    if (!fbpcLevel1) return
+    async function fetchLevel2() {
+      const { data, error } = await supabase
+        .from('fb_product_categories')
+        .select('level_2')
+        .eq('level_1', fbpcLevel1)
+        .not('level_2', 'is', null)
+        .is('level_3', null) // une ligne par sous-catégorie (« sporting goods » dépasse 1000 lignes)
+        .order('level_2')
+
+      if (error) {
+        console.error('Erreur chargement fb_product_categories (niveau 2):', error)
+      }
+
+      const unique = [...new Set((data ?? []).map((d) => d.level_2).filter(Boolean))]
+      setFbpcLevel2Options(unique)
+      setFbpcLevel2('')
+      if (unique.length === 0) {
+        setField('fb_product_category', fbpcLevel1)
+      }
+    }
+    fetchLevel2()
+  }, [fbpcLevel1, supabase])
+
+  useEffect(() => {
+    if (!fbpcLevel1 || !fbpcLevel2) return
+    async function fetchLevel3() {
+      const { data, error } = await supabase
+        .from('fb_product_categories')
+        .select('level_3, full_path')
+        .eq('level_1', fbpcLevel1)
+        .eq('level_2', fbpcLevel2)
+        .not('level_3', 'is', null)
+        .order('level_3')
+
+      if (error) {
+        console.error('Erreur chargement fb_product_categories (niveau 3):', error)
+      }
+
+      const opts = (data ?? []).map((d) => ({
+        label: d.level_3,
+        full_path: d.full_path
+      }))
+      setFbpcLevel3Options(opts)
+      // Si aucun niveau 3 → l'ensemble des valeurs est le chemin complet niveau 1 > niveau 2
+      if (opts.length === 0) {
+        const fullVal = (data?.[0]?.full_path) || [fbpcLevel1, fbpcLevel2].filter(Boolean).join(' > ')
+        setField('fb_product_category', fullVal)
+      }
+    }
+    fetchLevel3()
+  }, [fbpcLevel1, fbpcLevel2, supabase])
 
   // -------------------------------------------------------------------
   // Short helper to update a single form field
@@ -419,7 +460,10 @@ useEffect(() => {
 
   function openCreateModal() {
     setEditingProduit(null)
-    setFormData(EMPTY_FORM)
+    setFormData({
+      ...EMPTY_FORM,
+      currency: defaultCurrency || account?.default_currency || 'USD',
+    })
     setFormOpen(true)
   }
 
@@ -428,20 +472,133 @@ useEffect(() => {
     // Only pre-fill the fields that come from the table query;
     // the rest stay empty and can be filled in freely.
     setFormData({
-      ...EMPTY_FORM,
+      vertical: produit.vertical ?? '',
+      external_id: produit.external_id ?? '',
       title: produit.title ?? '',
-      availability: produit.availability ?? '',
+      description: produit.description ?? '',
+      status: produit.status ?? 'active',
+      url: produit.url ?? '',
       image_url: produit.image_url ?? '',
-      quantity: produit.quantity != null ? String(produit.quantity) : '',
+      additional_image_urls: Array.isArray(produit.additional_image_urls) ? produit.additional_image_urls.join(', ') : (produit.additional_image_urls ?? ''),
+      videos: typeof produit.videos === 'string' ? produit.videos : produit.videos ? JSON.stringify(produit.videos, null, 2) : '',
+      price: produit.price != null ? String(produit.price) : '',
+      currency: produit.currency || defaultCurrency || account?.default_currency || 'USD',
       sale_price: produit.sale_price != null ? String(produit.sale_price) : '',
+      sale_price_starts_at: produit.sale_price_starts_at ? new Date(produit.sale_price_starts_at).toISOString().slice(0, 16) : '',
+      sale_price_ends_at: produit.sale_price_ends_at ? new Date(produit.sale_price_ends_at).toISOString().slice(0, 16) : '',
+      rental_price: produit.rental_price != null ? String(produit.rental_price) : '',
+      booking_mode: produit.booking_mode ?? '',
+      quantity: produit.quantity != null ? String(produit.quantity) : '',
+      availability: produit.availability ?? '',
+      condition: produit.condition ?? 'new',
+      brand: produit.brand ?? '',
+      gtin: produit.gtin ?? '',
+      google_product_category: produit.google_product_category ?? '',
+      fb_product_category: produit.fb_product_category ?? '',
+      item_group_id: produit.item_group_id ?? '',
+      gender: produit.gender ?? '',
+      color: produit.color ?? '',
+      size: produit.size ?? '',
+      age_group: produit.age_group ?? '',
+      material: produit.material ?? '',
+      pattern: produit.pattern ?? '',
+      style: Array.isArray(produit.style) ? produit.style.join(', ') : (produit.style ?? ''),
+      shipping: typeof produit.shipping === 'string' ? produit.shipping : produit.shipping ? JSON.stringify(produit.shipping, null, 2) : '',
+      shipping_weight_value: produit.shipping_weight_value != null ? String(produit.shipping_weight_value) : '',
+      shipping_weight_unit: produit.shipping_weight_unit ?? '',
+      offer_disclaimer: produit.offer_disclaimer ?? '',
+      offer_disclaimer_url: produit.offer_disclaimer_url ?? '',
+      product_tags: Array.isArray(produit.product_tags) ? produit.product_tags.join(', ') : (produit.product_tags ?? ''),
+      attributes: typeof produit.attributes === 'string' ? produit.attributes : produit.attributes ? JSON.stringify(produit.attributes, null, 2) : '',
+      for_sale: produit.for_sale ? 'true' : 'false',
+      for_rent: produit.for_rent ? 'true' : 'false',
     })
     setFormOpen(true)
+  }
+
+  async function handleImageFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Veuillez sélectionner un fichier image valide')
+      return
+    }
+
+    setUploadingImage(true)
+    try {
+      const { publicUrl } = await uploadAccountMedia('chat-media', file)
+      setField('image_url', publicUrl)
+      toast.success('Photo téléversée avec succès')
+    } catch (err) {
+      console.error('Erreur upload photo:', err)
+      toast.error((err as Error)?.message || 'Erreur lors du téléversement de la photo')
+    } finally {
+      setUploadingImage(false)
+      e.target.value = ''
+    }
+  }
+
+  async function handleUrlFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Veuillez sélectionner un fichier image valide')
+      return
+    }
+
+    setUploadingUrl(true)
+    try {
+      const { publicUrl } = await uploadAccountMedia('chat-media', file)
+      setField('url', publicUrl)
+      toast.success('Image pour l\'URL produit téléversée avec succès')
+    } catch (err) {
+      console.error('Erreur upload fichier url:', err)
+      toast.error((err as Error)?.message || 'Erreur lors du téléversement du fichier')
+    } finally {
+      setUploadingUrl(false)
+      e.target.value = ''
+    }
   }
 
   async function handleSave() {
     if (!formData.title.trim()) {
       toast.error('Le titre du produit est requis')
       return
+    }
+
+    if (!formData.description.trim()) {
+      toast.error('La description du produit est requise')
+      return
+    }
+
+    if (!formData.vertical.trim()) {
+      toast.error('Le vertical du produit est requis')
+      return
+    }
+
+    if (!formData.external_id.trim()) {
+      toast.error("L'ID externe est requis")
+      return
+    }
+
+    if (!formData.price.trim()) {
+      toast.error('Le prix du produit est requis')
+      return
+    }
+
+
+
+    if (formData.for_sale === 'true') {
+      if (!formData.image_url.trim()) {
+        toast.error("La photo / URL de l'image est requise lorsque le produit est à vendre")
+        return
+      }
+      if (!formData.url.trim()) {
+        toast.error("L'URL du produit est requise lorsque le produit est à vendre")
+        return
+      }
     }
 
     // Numeric conversions
@@ -464,26 +621,28 @@ useEffect(() => {
     // Array fields
     const product_tags = parseTags(formData.product_tags)
     const style = parseTags(formData.style)
+    const additional_image_urls = parseTags(formData.additional_image_urls)
 
     setSaving(true)
 
     const payload = {
       // Infos générales
-      vertical: formData.vertical.trim() || null,
-      external_id: formData.external_id.trim() || null,
+      vertical: formData.vertical.trim() || 'default',
+      external_id: formData.external_id.trim() || `ext-${Date.now()}`,
       title: formData.title.trim(),
-      description: formData.description.trim() || null,
-      status: formData.status.trim() || null,
+      description: formData.description.trim() || '',
+      status: formData.status.trim() || 'active',
       // Fixed values
-      for_sale: true,
-      for_rent: false,
+      for_sale: formData.for_sale === 'true',
+      for_rent: formData.for_rent === 'true',
       // Médias & URL
       url: formData.url.trim() || null,
       image_url: formData.image_url.trim() || null,
-      videos,
+      additional_image_urls: additional_image_urls || [],
+      videos: videos || [],
       // Prix
-      price,
-      currency: formData.currency.trim() || null,
+      price: price || 0,
+      currency: formData.currency?.trim() || defaultCurrency || account?.default_currency || 'USD',
       sale_price,
       sale_price_starts_at: formData.sale_price_starts_at || null,
       sale_price_ends_at: formData.sale_price_ends_at || null,
@@ -492,7 +651,7 @@ useEffect(() => {
       // Inventaire
       quantity: normalizedInventory.quantity,
       availability: resolvedAvailability,
-      condition: formData.condition.trim() || null,
+      condition: formData.condition.trim() || 'new',
       // Identifiants
       brand: formData.brand.trim() || null,
       gtin: formData.gtin.trim() || null,
@@ -506,7 +665,7 @@ useEffect(() => {
       age_group: formData.age_group.trim() || null,
       material: formData.material.trim() || null,
       pattern: formData.pattern.trim() || null,
-      style,
+      style: style || [],
       // Livraison
       shipping,
       shipping_weight_value,
@@ -515,8 +674,10 @@ useEffect(() => {
       offer_disclaimer: formData.offer_disclaimer.trim() || null,
       offer_disclaimer_url: formData.offer_disclaimer_url.trim() || null,
       // Tags & Attributs
-      product_tags,
-      attributes,
+      product_tags: product_tags || [],
+      attributes: attributes || {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     }
 
     if (editingProduit) {
@@ -527,7 +688,7 @@ useEffect(() => {
 
       if (error) {
         console.error('Update error:', error)
-        toast.error('Erreur lors de la modification')
+        toast.error('Erreur lors de la modification: ' + error.message)
       } else {
         toast.success('Produit modifié avec succès')
         setFormOpen(false)
@@ -545,7 +706,7 @@ useEffect(() => {
 
       if (error) {
         console.error('Insert error:', error)
-        toast.error('Erreur lors de la création')
+        toast.error('Erreur lors de la création: ' + error.message)
       } else {
         toast.success('Produit créé avec succès')
         setFormOpen(false)
@@ -584,7 +745,7 @@ useEffect(() => {
   // Pagination helpers
   // -------------------------------------------------------------------
 
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const canPrev = page > 0
   const canNext = page < totalPages - 1
 
@@ -593,17 +754,35 @@ useEffect(() => {
   // -------------------------------------------------------------------
 
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col h-[calc(100vh-7rem)] space-y-5">
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Produits</h1>
         </div>
-        <Button onClick={openCreateModal} className="gap-2">
-          <Plus className="h-4 w-4" />
-          Nouveau produit
-        </Button>
+        <div className="flex gap-2">
+          <GatedButton
+            variant="outline"
+            canAct={canEditSettings}
+            gateReason="import products"
+            onClick={() => setImportOpen(true)}
+            className="border-border text-muted-foreground hover:bg-muted"
+          >
+            <Upload className="size-4" />
+            Importer produits
+          </GatedButton>
+          <Button onClick={openCreateModal} className="gap-2">
+            <Plus className="h-4 w-4" />
+            Nouveau produit
+          </Button>
+        </div>
       </div>
+
+      <ImportModal
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImported={fetchProduits}
+      />
 
       {/* Search bar */}
       <div className="relative max-w-sm">
@@ -617,151 +796,166 @@ useEffect(() => {
       </div>
 
       {/* Table */}
-      <div className="rounded-lg border border-border bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <TableHead className="w-14">Image</TableHead>
-              <TableHead>Titre</TableHead>
-              <TableHead className="hidden sm:table-cell">Disponibilité</TableHead>
-              <TableHead className="text-right">Quantité</TableHead>
-              <TableHead className="text-right">Prix</TableHead>
-              <TableHead className="w-12" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={6} className="h-32 text-center">
-                  <div className="flex items-center justify-center gap-2 text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Chargement…
-                  </div>
-                </TableCell>
+      <div className="rounded-lg border border-border bg-card flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 min-h-0 [&>[data-slot=table-container]]:h-full [&>[data-slot=table-container]]:overflow-y-auto [&>[data-slot=table-container]]:[&::-webkit-scrollbar]:h-2 [&>[data-slot=table-container]]:[&::-webkit-scrollbar]:w-2 [&>[data-slot=table-container]]:[&::-webkit-scrollbar-track]:bg-transparent [&>[data-slot=table-container]]:[&::-webkit-scrollbar-thumb]:bg-border/60 [&>[data-slot=table-container]]:[&::-webkit-scrollbar-thumb]:rounded-full">
+          <Table className="border-separate border-spacing-0">
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="sticky top-0 z-10 bg-card w-14">Image</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card">Titre</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card hidden sm:table-cell">Disponibilité</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card text-right">Quantité</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card text-right">Prix</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card hidden md:table-cell whitespace-nowrap">Dernière mise à jour</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card w-12" />
               </TableRow>
-            ) : produits.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} className="h-32 text-center">
-                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                    <Package className="h-8 w-8 opacity-40" />
-                    {search ? 'Aucun produit trouvé' : 'Aucun produit pour le moment'}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ) : (
-              produits.map((p) => {
-                const effectiveAvailability = (p.quantity ?? 0) > 0 ? 'in stock' : 'out of stock'
-                const displayPrice = getCurrentDisplayPrice(p)
-
-                return (
-                <TableRow key={p.id}>
-                  {/* Image */}
-                  <TableCell>
-                    {p.image_url ? (
-                      <img
-                        src={p.image_url}
-                        alt={p.title ?? 'Produit'}
-                        className="h-10 w-10 rounded-md object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-10 w-10 items-center justify-center rounded-md bg-muted">
-                        <Package className="h-5 w-5 text-muted-foreground opacity-50" />
-                      </div>
-                    )}
-                  </TableCell>
-                  {/* Title */}
-                  <TableCell className="font-medium text-foreground">
-                    {p.title || '—'}
-                  </TableCell>
-                  {/* Availability */}
-                  <TableCell className="hidden sm:table-cell">
-                    <span
-                      className={
-                        effectiveAvailability === 'in stock'
-                          ? 'inline-flex items-center rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-400'
-                          : 'inline-flex items-center rounded-full bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-400'
-                      }
-                    >
-                      {effectiveAvailability}
-                    </span>
-                  </TableCell>
-                  {/* Quantity */}
-                  <TableCell className="text-right tabular-nums">
-                    {p.quantity != null ? p.quantity.toLocaleString('fr-FR') : '—'}
-                  </TableCell>
-                  {/* Current price */}
-                  <TableCell className="text-right tabular-nums">
-                    {displayPrice != null
-                      ? Number(displayPrice).toLocaleString('fr-FR', {
-                          style: 'currency',
-                          currency: 'EUR',
-                          minimumFractionDigits: 2,
-                        })
-                      : '—'}
-                  </TableCell>
-                  {/* Actions */}
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        render={
-                          <button
-                            type="button"
-                            className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                          />
-                        }
-                      >
-                        <MoreHorizontal className="h-4 w-4" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="min-w-36 bg-popover text-popover-foreground ring-border">
-                        <DropdownMenuItem onClick={() => openEditModal(p)}>
-                          <Pencil className="mr-2 h-4 w-4" />
-                          Modifier
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onClick={() => setDeleteTarget(p)}
-                          className="text-red-400 focus:text-red-400"
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Supprimer
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+            </TableHeader>
+            <TableBody>
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="h-32 text-center">
+                    <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Chargement…
+                    </div>
                   </TableCell>
                 </TableRow>
-                )
-              })
-            )}
-          </TableBody>
-        </Table>
+              ) : produits.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="h-32 text-center">
+                    <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                      <Package className="h-8 w-8 opacity-40" />
+                      {search ? 'Aucun produit trouvé' : 'Aucun produit pour le moment'}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                produits.map((p) => {
+                  const effectiveAvailability = (p.quantity ?? 0) > 0 ? 'in stock' : 'out of stock'
+                  const displayPrice = getCurrentDisplayPrice(p)
+
+                  return (
+                    <TableRow key={p.id}>
+                      {/* Image */}
+                      <TableCell>
+                        {p.image_url ? (
+                          <img
+                            src={p.image_url}
+                            alt={p.title ?? 'Produit'}
+                            className="h-10 w-10 rounded-md object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-10 w-10 items-center justify-center rounded-md bg-muted">
+                            <Package className="h-5 w-5 text-muted-foreground opacity-50" />
+                          </div>
+                        )}
+                      </TableCell>
+                      {/* Title */}
+                      <TableCell className="font-medium text-foreground">
+                        {p.title || '—'}
+                      </TableCell>
+                      {/* Availability */}
+                      <TableCell className="hidden sm:table-cell">
+                        <span
+                          className={
+                            effectiveAvailability === 'in stock'
+                              ? 'inline-flex items-center rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-400'
+                              : 'inline-flex items-center rounded-full bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-400'
+                          }
+                        >
+                          {effectiveAvailability}
+                        </span>
+                      </TableCell>
+                      {/* Quantity */}
+                      <TableCell className="text-right tabular-nums">
+                        {p.quantity != null ? p.quantity.toLocaleString('fr-FR') : '—'}
+                      </TableCell>
+                      {/* Current price */}
+                      <TableCell className="text-right tabular-nums">
+                        {displayPrice != null
+                          ? Number(displayPrice).toLocaleString('fr-FR', {
+                            style: 'currency',
+                            currency: p.currency || defaultCurrency || account?.default_currency || 'USD',
+                            minimumFractionDigits: 2,
+                          })
+                          : '—'}
+                      </TableCell>
+                      {/* Last updated */}
+                      <TableCell className="hidden md:table-cell whitespace-nowrap text-sm text-muted-foreground">
+                        {p.updated_at
+                          ? new Date(p.updated_at).toLocaleString('fr-FR', {
+                            day: '2-digit',
+                            month: 'short',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                          : '—'}
+                      </TableCell>
+                      {/* Actions */}
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <button
+                                type="button"
+                                className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                              />
+                            }
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-36 bg-popover text-popover-foreground ring-border">
+                            <DropdownMenuItem onClick={() => openEditModal(p)}>
+                              <Pencil className="mr-2 h-4 w-4" />
+                              Modifier
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => setDeleteTarget(p)}
+                              className="text-red-400 focus:text-red-400"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Supprimer
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
 
         {/* Pagination */}
-        {totalCount > PAGE_SIZE && (
-          <div className="flex items-center justify-between border-t border-border px-4 py-3">
+        <div className="flex items-center justify-between border-t border-border px-4 py-3">
+          <p className="text-sm text-muted-foreground">
+            {totalCount} produit{totalCount > 1 ? 's' : ''} au total
+          </p>
+          <div className="flex items-center gap-4">
             <p className="text-sm text-muted-foreground">
-              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} sur{' '}
-              {totalCount}
+              Page {page + 1} sur {totalPages}
             </p>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+            </select>
             <div className="flex gap-1">
-              <Button
-                variant="outline"
-                size="icon-sm"
-                disabled={!canPrev}
-                onClick={() => setPage((p) => p - 1)}
-              >
+              <Button variant="outline" size="icon-sm" disabled={!canPrev} onClick={() => setPage((p) => p - 1)}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <Button
-                variant="outline"
-                size="icon-sm"
-                disabled={!canNext}
-                onClick={() => setPage((p) => p + 1)}
-              >
+              <Button variant="outline" size="icon-sm" disabled={!canNext} onClick={() => setPage((p) => p + 1)}>
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
           </div>
-        )}
+        </div>
       </div>
 
       {/* ----------------------------------------------------------- */}
@@ -788,7 +982,9 @@ useEffect(() => {
               <section className="flex flex-col gap-3">
                 <SectionTitle>Informations générales</SectionTitle>
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="f-title">Titre *</Label>
+                  <Label htmlFor="f-title" className="flex items-center gap-1">
+                    Titre <span className="text-red-500 font-bold">*</span>
+                  </Label>
                   <Input
                     id="f-title"
                     placeholder="Titre du produit"
@@ -797,7 +993,9 @@ useEffect(() => {
                   />
                 </div>
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="f-description">Description</Label>
+                  <Label htmlFor="f-description" className="flex items-center gap-1">
+                    Description <span className="text-red-500 font-bold">*</span>
+                  </Label>
                   <textarea
                     id="f-description"
                     rows={3}
@@ -809,7 +1007,9 @@ useEffect(() => {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-vertical">Vertical</Label>
+                    <Label htmlFor="f-vertical" className="flex items-center gap-1">
+                      Vertical <span className="text-red-500 font-bold">*</span>
+                    </Label>
                     <Input
                       id="f-vertical"
                       placeholder="ex: fashion, electronics…"
@@ -818,17 +1018,60 @@ useEffect(() => {
                     />
                   </div>
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-status">Statut</Label>
-                    <Input
+                    <Label>Statut <span className="text-red-500 font-bold">*</span></Label>
+                    <button
                       id="f-status"
-                      placeholder="ex: active, draft…"
-                      value={formData.status}
-                      onChange={(e) => setField('status', e.target.value)}
-                    />
+                      type="button"
+                      onClick={() => setField('status', formData.status === 'active' ? 'inactive' : 'active')}
+                      className={[
+                        'inline-flex items-center gap-2 self-start rounded-full px-4 py-1.5 text-sm font-semibold transition-colors border',
+                        formData.status === 'active'
+                          ? 'bg-primary/10 text-primary border-primary/20 hover:bg-primary/20'
+                          : 'bg-muted text-muted-foreground border-border hover:bg-muted/60',
+                      ].join(' ')}
+                    >
+                      <span className={[
+                        'inline-block h-2 w-2 rounded-full',
+                        formData.status === 'active' ? 'bg-primary' : 'bg-muted-foreground',
+                      ].join(' ')} />
+                      {formData.status === 'active' ? 'Actif' : 'Inactif'}
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="f-for-sale" className="flex items-center gap-1">
+                      À vendre <span className="text-red-500 font-bold">*</span>
+                    </Label>
+                    <select
+                      id="f-for-sale"
+                      value={formData.for_sale}
+                      onChange={(e) => setField('for_sale', e.target.value)}
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="true">Oui</option>
+                      <option value="false">Non</option>
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="f-for-rent" className="flex items-center gap-1">
+                      À louer <span className="text-red-500 font-bold">*</span>
+                    </Label>
+                    <select
+                      id="f-for-rent"
+                      value={formData.for_rent}
+                      onChange={(e) => setField('for_rent', e.target.value)}
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="true">Oui</option>
+                      <option value="false">Non</option>
+                    </select>
                   </div>
                 </div>
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="f-external-id">ID externe</Label>
+                  <Label htmlFor="f-external-id" className="flex items-center gap-1">
+                    ID externe <span className="text-red-500 font-bold">*</span>
+                  </Label>
                   <Input
                     id="f-external-id"
                     placeholder="Référence externe"
@@ -844,22 +1087,175 @@ useEffect(() => {
               <section className="flex flex-col gap-3">
                 <SectionTitle>Médias &amp; URL</SectionTitle>
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="f-image-url">URL de l'image</Label>
+                  <Label htmlFor="f-image-file" className="flex items-center gap-1">
+                    Photo du produit {formData.for_sale === 'true' && <span className="text-red-500 font-bold">*</span>}
+                  </Label>
+
+                  {/* Aperçu ou sélecteur de fichier */}
+                  {formData.image_url ? (
+                    <div className="flex items-center gap-3 p-3 rounded-lg border border-input bg-muted/20">
+                      <div className="relative h-16 w-16 rounded-md overflow-hidden border border-border bg-background shrink-0">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={formData.image_url}
+                          alt="Aperçu du produit"
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0 flex flex-col gap-1">
+                        <span className="text-xs text-muted-foreground truncate">{formData.image_url}</span>
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs font-medium text-primary hover:underline cursor-pointer">
+                            Changer la photo
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={handleImageFileUpload}
+                              disabled={uploadingImage}
+                            />
+                          </label>
+                          <span className="text-xs text-muted-foreground">•</span>
+                          <button
+                            type="button"
+                            onClick={() => setField('image_url', '')}
+                            className="text-xs font-medium text-red-500 hover:underline"
+                          >
+                            Supprimer
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <label className="flex flex-col items-center justify-center border-2 border-dashed border-input hover:border-primary/50 rounded-lg p-4 cursor-pointer bg-muted/10 hover:bg-muted/20 transition-colors">
+                        {uploadingImage ? (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                            <span>Téléversement de la photo…</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-1.5 text-center">
+                            <Upload className="h-6 w-6 text-muted-foreground" />
+                            <span className="text-sm font-medium text-foreground">
+                              Sélectionner une photo depuis un fichier
+                            </span>
+                            <span className="text-xs text-muted-foreground">PNG, JPG, WEBP jusqu’à 16 Mo</span>
+                          </div>
+                        )}
+                        <input
+                          id="f-image-file"
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handleImageFileUpload}
+                          disabled={uploadingImage}
+                        />
+                      </label>
+                      <div className="pt-1">
+                        <Input
+                          id="f-image-url"
+                          placeholder="Ou coller une URL d'image externe (https://…)"
+                          value={formData.image_url}
+                          onChange={(e) => setField('image_url', e.target.value)}
+                          className="text-xs h-8"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="f-additional-image-urls">
+                    Images additionnelles <span className="text-xs text-muted-foreground">(URLs séparées par des virgules)</span>
+                  </Label>
                   <Input
-                    id="f-image-url"
-                    placeholder="https://…"
-                    value={formData.image_url}
-                    onChange={(e) => setField('image_url', e.target.value)}
+                    id="f-additional-image-urls"
+                    placeholder="https://img1, https://img2"
+                    value={formData.additional_image_urls}
+                    onChange={(e) => setField('additional_image_urls', e.target.value)}
                   />
                 </div>
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="f-url">URL du produit</Label>
-                  <Input
-                    id="f-url"
-                    placeholder="https://…"
-                    value={formData.url}
-                    onChange={(e) => setField('url', e.target.value)}
-                  />
+                  <Label htmlFor="f-url-file" className="flex items-center gap-1">
+                    URL du produit {formData.for_sale === 'true' && <span className="text-red-500 font-bold">*</span>}
+                  </Label>
+
+                  {/* Aperçu ou sélecteur de fichier pour l'URL du produit */}
+                  {formData.url ? (
+                    <div className="flex items-center gap-3 p-3 rounded-lg border border-input bg-muted/20">
+                      <div className="relative h-16 w-16 rounded-md overflow-hidden border border-border bg-background shrink-0 flex items-center justify-center bg-muted/40">
+                        {formData.url.match(/\.(jpeg|jpg|gif|png|webp)($|\?)/i) ? (
+                          /* eslint-disable-next-line @next/next/no-img-element */
+                          <img
+                            src={formData.url}
+                            alt="Aperçu URL produit"
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <ImageIcon className="h-6 w-6 text-muted-foreground" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0 flex flex-col gap-1">
+                        <span className="text-xs text-muted-foreground truncate">{formData.url}</span>
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs font-medium text-primary hover:underline cursor-pointer">
+                            Changer le fichier
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={handleUrlFileUpload}
+                              disabled={uploadingUrl}
+                            />
+                          </label>
+                          <span className="text-xs text-muted-foreground">•</span>
+                          <button
+                            type="button"
+                            onClick={() => setField('url', '')}
+                            className="text-xs font-medium text-red-500 hover:underline"
+                          >
+                            Supprimer
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <label className="flex flex-col items-center justify-center border-2 border-dashed border-input hover:border-primary/50 rounded-lg p-4 cursor-pointer bg-muted/10 hover:bg-muted/20 transition-colors">
+                        {uploadingUrl ? (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                            <span>Téléversement en cours…</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-1.5 text-center">
+                            <Upload className="h-6 w-6 text-muted-foreground" />
+                            <span className="text-sm font-medium text-foreground">
+                              Sélectionner une image pour l’URL du produit
+                            </span>
+                            <span className="text-xs text-muted-foreground">PNG, JPG, WEBP jusqu’à 16 Mo</span>
+                          </div>
+                        )}
+                        <input
+                          id="f-url-file"
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handleUrlFileUpload}
+                          disabled={uploadingUrl}
+                        />
+                      </label>
+                      <div className="pt-1">
+                        <Input
+                          id="f-url"
+                          placeholder="Ou saisir une URL directe (https://…)"
+                          value={formData.url}
+                          onChange={(e) => setField('url', e.target.value)}
+                          className="text-xs h-8"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="f-videos">
@@ -882,28 +1278,19 @@ useEffect(() => {
               {/* ── Section 3 : Prix ── */}
               <section className="flex flex-col gap-3">
                 <SectionTitle>Prix</SectionTitle>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-price">Prix</Label>
-                    <Input
-                      id="f-price"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="0.00"
-                      value={formData.price}
-                      onChange={(e) => setField('price', e.target.value)}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-currency">Devise</Label>
-                    <Input
-                      id="f-currency"
-                      placeholder="EUR, USD…"
-                      value={formData.currency}
-                      onChange={(e) => setField('currency', e.target.value)}
-                    />
-                  </div>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="f-price" className="flex items-center gap-1">
+                    Prix ({defaultCurrency || account?.default_currency || 'USD'}) <span className="text-red-500 font-bold">*</span>
+                  </Label>
+                  <Input
+                    id="f-price"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={formData.price}
+                    onChange={(e) => setField('price', e.target.value)}
+                  />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-2">
@@ -981,16 +1368,9 @@ useEffect(() => {
                     />
                   </div>
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-availability">Disponibilité</Label>
-                    <Input
-                      id="f-availability"
-                      placeholder="in stock / out of stock…"
-                      value={formData.availability}
-                      onChange={(e) => setField('availability', e.target.value)}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-condition">État</Label>
+                    <Label htmlFor="f-condition" className="flex items-center gap-1">
+                      Condition <span className="text-red-500 font-bold">*</span>
+                    </Label>
                     <Input
                       id="f-condition"
                       placeholder="new, used, refurbished…"
@@ -1028,15 +1408,29 @@ useEffect(() => {
                 </div>
                 {/* ── Catégorie Google ── */}
                 <div className="flex flex-col gap-2">
-                  <Label>Catégorie Google</Label>
+                  <div className="flex items-center justify-between">
+                    <Label>Catégorie Google</Label>
+                    {gpcLevel1Options.length === 0 && (
+                      <span className="text-xs text-amber-500">Table vide ou accès restreint par RLS</span>
+                    )}
+                  </div>
                   <div className="rounded-lg border border-input bg-muted/20 p-3 flex flex-col gap-2">
                     {/* Niveau 1 */}
                     <select
                       value={gpcLevel1}
-                      onChange={(e) => { setGpcLevel1(e.target.value); setGpcLevel2(''); setField('google_product_category', ''); }}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setGpcLevel1(val);
+                        setGpcLevel2('');
+                        setField('google_product_category', val);
+                      }}
                       className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     >
-                      <option value="" hidden />
+                      <option value="">
+                        {gpcLevel1Options.length > 0
+                          ? '-- Sélectionner une catégorie principale --'
+                          : '-- Aucune catégorie dans la table ou accès restreint --'}
+                      </option>
                       {gpcLevel1Options.map((opt) => (
                         <option key={opt} value={opt}>{opt}</option>
                       ))}
@@ -1047,10 +1441,18 @@ useEffect(() => {
                         <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                         <select
                           value={gpcLevel2}
-                          onChange={(e) => setGpcLevel2(e.target.value)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setGpcLevel2(val);
+                            if (val) {
+                              setField('google_product_category', [gpcLevel1, val].filter(Boolean).join(' > '));
+                            } else {
+                              setField('google_product_category', gpcLevel1);
+                            }
+                          }}
                           className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                         >
-                          <option value="" hidden />
+                          <option value="">-- Sélectionner une sous-catégorie --</option>
                           {gpcLevel2Options.map((opt) => (
                             <option key={opt} value={opt}>{opt}</option>
                           ))}
@@ -1064,18 +1466,32 @@ useEffect(() => {
                         <select
                           value={formData.google_product_category}
                           onChange={(e) => {
-                            const selected = gpcLevel3Options.find(opt => opt.full_path === e.target.value)
-                            setField('google_product_category', selected?.label ?? e.target.value)
+                            const val = e.target.value;
+                            const selected = gpcLevel3Options.find(opt => opt.full_path === val || opt.label === val);
+                            const fullVal = selected?.full_path?.trim() || [gpcLevel1, gpcLevel2, selected?.label ?? val].filter(Boolean).join(' > ');
+                            setField('google_product_category', fullVal);
                           }}
                           className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                         >
-                          <option value="" hidden />
-                          {gpcLevel3Options.map((opt) => (
-                            <option key={opt.full_path} value={opt.full_path}>{opt.label}</option>
-                          ))}
+                          <option value="">-- Sélectionner une catégorie finale --</option>
+                          {gpcLevel3Options.map((opt) => {
+                            const optVal = opt.full_path?.trim() || [gpcLevel1, gpcLevel2, opt.label].filter(Boolean).join(' > ');
+                            return (
+                              <option key={opt.full_path || opt.label} value={optVal}>{opt.label}</option>
+                            );
+                          })}
                         </select>
                       </div>
                     )}
+                    {/* Saisie manuelle si liste vide ou souhait de précision */}
+                    <div className="pt-1">
+                      <Input
+                        placeholder="Ou saisie libre : ex. Apparel & Accessories > Clothing"
+                        value={formData.google_product_category}
+                        onChange={(e) => setField('google_product_category', e.target.value)}
+                        className="text-xs h-8"
+                      />
+                    </div>
                     {/* Badge valeur finale */}
                     {formData.google_product_category && (
                       <div className="flex items-center gap-1.5 rounded-md bg-primary/10 px-2.5 py-1.5">
@@ -1088,15 +1504,29 @@ useEffect(() => {
 
                 {/* ── Catégorie Facebook ── */}
                 <div className="flex flex-col gap-2">
-                  <Label>Catégorie Facebook</Label>
+                  <div className="flex items-center justify-between">
+                    <Label>Catégorie Facebook</Label>
+                    {fbpcLevel1Options.length === 0 && (
+                      <span className="text-xs text-amber-500">Table vide ou accès restreint par RLS</span>
+                    )}
+                  </div>
                   <div className="rounded-lg border border-input bg-muted/20 p-3 flex flex-col gap-2">
                     {/* Niveau 1 */}
                     <select
                       value={fbpcLevel1}
-                      onChange={(e) => { setFbpcLevel1(e.target.value); setFbpcLevel2(''); setField('fb_product_category', ''); }}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFbpcLevel1(val);
+                        setFbpcLevel2('');
+                        setField('fb_product_category', val);
+                      }}
                       className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     >
-                      <option value="" hidden />
+                      <option value="">
+                        {fbpcLevel1Options.length > 0
+                          ? '-- Sélectionner une catégorie principale --'
+                          : '-- Aucune catégorie dans la table ou accès restreint --'}
+                      </option>
                       {fbpcLevel1Options.map((opt) => (
                         <option key={opt} value={opt}>{opt}</option>
                       ))}
@@ -1107,10 +1537,18 @@ useEffect(() => {
                         <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                         <select
                           value={fbpcLevel2}
-                          onChange={(e) => setFbpcLevel2(e.target.value)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFbpcLevel2(val);
+                            if (val) {
+                              setField('fb_product_category', [fbpcLevel1, val].filter(Boolean).join(' > '));
+                            } else {
+                              setField('fb_product_category', fbpcLevel1);
+                            }
+                          }}
                           className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                         >
-                          <option value="" hidden />
+                          <option value="">-- Sélectionner une sous-catégorie --</option>
                           {fbpcLevel2Options.map((opt) => (
                             <option key={opt} value={opt}>{opt}</option>
                           ))}
@@ -1124,18 +1562,32 @@ useEffect(() => {
                         <select
                           value={formData.fb_product_category}
                           onChange={(e) => {
-                            const selected = fbpcLevel3Options.find(opt => opt.full_path === e.target.value)
-                            setField('fb_product_category', selected?.label ?? e.target.value)
+                            const val = e.target.value;
+                            const selected = fbpcLevel3Options.find(opt => opt.full_path === val || opt.label === val);
+                            const fullVal = selected?.full_path?.trim() || [fbpcLevel1, fbpcLevel2, selected?.label ?? val].filter(Boolean).join(' > ');
+                            setField('fb_product_category', fullVal);
                           }}
                           className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                         >
-                          <option value="" hidden />
-                          {fbpcLevel3Options.map((opt) => (
-                            <option key={opt.full_path} value={opt.full_path}>{opt.label}</option>
-                          ))}
+                          <option value="">-- Sélectionner une catégorie finale --</option>
+                          {fbpcLevel3Options.map((opt) => {
+                            const optVal = opt.full_path?.trim() || [fbpcLevel1, fbpcLevel2, opt.label].filter(Boolean).join(' > ');
+                            return (
+                              <option key={opt.full_path || opt.label} value={optVal}>{opt.label}</option>
+                            );
+                          })}
                         </select>
                       </div>
                     )}
+                    {/* Saisie manuelle si liste vide ou souhait de précision */}
+                    <div className="pt-1">
+                      <Input
+                        placeholder="Ou saisie libre : ex. Vêtements et accessoires"
+                        value={formData.fb_product_category}
+                        onChange={(e) => setField('fb_product_category', e.target.value)}
+                        className="text-xs h-8"
+                      />
+                    </div>
                     {/* Badge valeur finale */}
                     {formData.fb_product_category && (
                       <div className="flex items-center gap-1.5 rounded-md bg-blue-500/10 px-2.5 py-1.5">
@@ -1146,7 +1598,7 @@ useEffect(() => {
                   </div>
                 </div>
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="f-item-group">ID groupe d'articles</Label>
+                  <Label htmlFor="f-item-group">ID groupe d’articles</Label>
                   <Input
                     id="f-item-group"
                     placeholder="item_group_id"
@@ -1164,30 +1616,53 @@ useEffect(() => {
                 <div className="grid grid-cols-3 gap-4">
                   <div className="flex flex-col gap-2">
                     <Label htmlFor="f-gender">Genre</Label>
-                    <Input
+                    <select
                       id="f-gender"
-                      placeholder="male, female, unisex…"
                       value={formData.gender}
                       onChange={(e) => setField('gender', e.target.value)}
-                    />
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="" hidden></option>
+                      <option value="male">Homme (male)</option>
+                      <option value="female">Femme (female)</option>
+                      <option value="unisex">Unisexe (unisex)</option>
+                    </select>
                   </div>
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="f-age-group">Groupe d'âge</Label>
-                    <Input
+                    <Label htmlFor="f-age-group">Groupe d’âge</Label>
+                    <select
                       id="f-age-group"
-                      placeholder="adult, kids…"
                       value={formData.age_group}
                       onChange={(e) => setField('age_group', e.target.value)}
-                    />
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="" hidden></option>
+                      <option value="newborn">Nouveau-né (newborn)</option>
+                      <option value="infant">Nourrisson (infant)</option>
+                      <option value="toddler">Bambin (toddler)</option>
+                      <option value="kids">Enfant (kids)</option>
+                      <option value="adult">Adulte (adult)</option>
+                    </select>
                   </div>
                   <div className="flex flex-col gap-2">
                     <Label htmlFor="f-size">Taille</Label>
-                    <Input
+                    <select
                       id="f-size"
-                      placeholder="S, M, L, XL…"
                       value={formData.size}
                       onChange={(e) => setField('size', e.target.value)}
-                    />
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="" hidden></option>
+                      <option value="XXS">XXS</option>
+                      <option value="XS">XS</option>
+                      <option value="S">S</option>
+                      <option value="M">M</option>
+                      <option value="L">L</option>
+                      <option value="XL">XL</option>
+                      <option value="XXL">XXL</option>
+                      <option value="3XL">3XL</option>
+                      <option value="TU">Taille Unique</option>
+                    </select>
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-4">
@@ -1283,7 +1758,7 @@ useEffect(() => {
               <section className="flex flex-col gap-3">
                 <SectionTitle>Offre</SectionTitle>
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="f-disclaimer">Mention légale de l'offre</Label>
+                  <Label htmlFor="f-disclaimer">Mention légale de l’offre</Label>
                   <Input
                     id="f-disclaimer"
                     placeholder="Texte de mention…"
@@ -1388,6 +1863,6 @@ useEffect(() => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </div >
   )
 }

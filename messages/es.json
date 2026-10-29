@@ -41,7 +41,11 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Perfil",
     "menuSettings": "Configuración",
-    "menuSignOut": "Cerrar sesión"
+    "menuSignOut": "Cerrar sesión",
+    "produits": "Productos",
+    "commandes": "Pedidos",
+    "services": "Servicios",
+    "reservations": "Citas"
   },
   "Header": {
     "dashboard": "Panel",
@@ -58,7 +62,12 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Perfil",
     "menuSettings": "Configuración",
-    "menuSignOut": "Cerrar sesión"
+    "menuSignOut": "Cerrar sesión",
+    "produits": "Productos",
+    "commandes": "Pedidos",
+    "services": "Servicios",
+    "reservations": "Citas",
+    "aiAgents": "Agentes de IA"
   },
   "ModeToggle": {
     "switchMode": "Cambiar al modo {mode}"
@@ -1481,9 +1490,9 @@
       "headerImage": "Imagen",
       "headerVideo": "Video",
       "headerDocument": "Documento",
-      "headerTextPlaceholder": "Texto del encabezado (máx. 60 caracteres, {{1}} opcional)",
+      "headerTextPlaceholder": "Texto del encabezado (máx. 60 caracteres, '{{1}}' opcional)",
       "headerSampleAria": "Valor de ejemplo para la variable del encabezado",
-      "headerSamplePlaceholder": "Valor de ejemplo para {{1}} (obligatorio para la revisión de Meta)",
+      "headerSamplePlaceholder": "Valor de ejemplo para '{{1}}' (obligatorio para la revisión de Meta)",
       "uploadImage": "Subir imagen",
       "uploadVideo": "Subir video",
       "uploadDocument": "Subir documento",
@@ -1496,8 +1505,8 @@
       "videoHint": " MP4 o 3GPP, ≤16 MB, ≤60 segundos recomendado.",
       "documentHint": " PDF, Word, PowerPoint, Excel o texto, ≤100 MB por enlace (≤16 MB si se sube aquí).",
       "bodyText": "Texto del cuerpo",
-      "bodyPlaceholder": "Hola {{1}}, tu pedido {{2}} está confirmado.",
-      "bodyHint": "Usa {{1}}, {{2}} para las variables (deben ser contiguas empezando en {{1}}).",
+      "bodyPlaceholder": "Hola '{{1}}', tu pedido '{{2}}' está confirmado.",
+      "bodyHint": "Usa '{{1}}', '{{2}}' para las variables (deben ser contiguas empezando en '{{1}}').",
       "sampleValues": "Valores de ejemplo (Meta los usa para revisar tu plantilla)",
       "sampleAria": "Valor de ejemplo para la variable del cuerpo {var}",
       "samplePlaceholder": "Ejemplo para {var}",
@@ -1511,8 +1520,8 @@
       "btnPhone": "Teléfono",
       "btnCopyCode": "Copiar código",
       "btnLabelPlaceholder": "Texto del botón",
-      "urlPlaceholder": "https://example.com/path o con sufijo {{1}}",
-      "urlSamplePlaceholder": "Valor de ejemplo para {{1}} (obligatorio cuando la URL tiene una variable)",
+      "urlPlaceholder": "https://example.com/path o con sufijo '{{1}}'",
+      "urlSamplePlaceholder": "Valor de ejemplo para '{{1}}' (obligatorio cuando la URL tiene una variable)",
       "phonePlaceholder": "+15551234567",
       "codePlaceholder": "Código de ejemplo (p. ej. VERANO20)",
       "cancel": "Cancelar",
@@ -1639,14 +1648,14 @@
       "step2_3": "Sigue el asistente de configuración para vincular tu empresa",
       "step3": "Obtén las credenciales de la API",
       "step3_1": "Ve a WhatsApp > Configuración de la API",
-      "step3_2": "Copia tu <strong class=\"text-foreground\">Phone Number ID</strong>",
-      "step3_3": "Copia tu <strong class=\"text-foreground\">ID de la cuenta de WhatsApp Business</strong>",
-      "step3_4": "Genera un <strong class=\"text-foreground\">Token de acceso permanente</strong> en Configuración del negocio > Usuarios del sistema",
+      "step3_2": "Copia tu <strong>Phone Number ID</strong>",
+      "step3_3": "Copia tu <strong>ID de la cuenta de WhatsApp Business</strong>",
+      "step3_4": "Genera un <strong>Token de acceso permanente</strong> en Configuración del negocio > Usuarios del sistema",
       "step4": "Configura los webhooks",
       "step4_1": "Ve a WhatsApp > Configuración",
       "step4_2": "Haz clic en \"Editar\" en la sección Webhook",
-      "step4_3": "Pega la <strong class=\"text-foreground\">URL de callback del webhook</strong> de arriba",
-      "step4_4": "Ingresa el mismo <strong class=\"text-foreground\">Token de verificación</strong> que configuraste aquí",
+      "step4_3": "Pega la <strong>URL de callback del webhook</strong> de arriba",
+      "step4_4": "Ingresa el mismo <strong>Token de verificación</strong> que configuraste aquí",
       "step4_5": "Suscríbete al campo de webhook \"messages\"",
       "metaDocs": "Documentación de la API de WhatsApp de Meta",
       "lastSaveFailed": "El último guardado falló",
@@ -1657,6 +1666,8 @@
       "metaErrorDetailsHint": "Cita estos detalles al contactar al soporte de Meta.",
       "phoneNumberIdNotNumeric": "El Phone Number ID debe contener solo dígitos. Copia el id numérico desde Meta → WhatsApp → Configuración de la API, no el número de teléfono en sí.",
       "wabaIdNotNumeric": "El ID de la cuenta de WhatsApp Business debe contener solo dígitos. Cópialo desde Meta → WhatsApp → Configuración de la API.",
+      "catalogId": "ID del catálogo",
+      "catalogIdNotNumeric": "El ID del catálogo debe contener solo dígitos. Cópialo desde Meta Commerce Manager.",
       "wabaSubscribed": "La cuenta de WhatsApp Business está suscrita a esta app: los webhooks entrantes pueden entregarse.",
       "wabaNotSubscribed": "La cuenta de WhatsApp Business no está suscrita a esta app, así que Meta no entregará webhooks entrantes. Vuelve a ingresar el token de acceso y guarda de nuevo para suscribirla."
     },
@@ -2049,5 +2060,39 @@
   },
   "DashboardShell": {
     "loading": "Cargando..."
+  },
+  "Products": {
+    "importModal": {
+      "title": "Importar productos",
+      "desc": "Sube un CSV con las columnas obligatorias <titleCode>title</titleCode> (o titre) y <brandCode>brand</brandCode> (o marque). También puede incluir <availabilityCode>availability</availabilityCode>, <priceCode>price</priceCode>, <quantityCode>quantity</quantityCode> e <imageCode>image</imageCode>.",
+      "uploadDropzone": "Haz clic para elegir un archivo CSV",
+      "uploadHint": "Solo archivos CSV",
+      "rowsReady": "{count} fila lista",
+      "rowsReady_plural": "{count} filas listas",
+      "preview": "Vista previa ({count})",
+      "columns": {
+        "image": "Imagen",
+        "title": "Título / Titre",
+        "brand": "Marca / Marque",
+        "availability": "Disponibilidad",
+        "quantity": "Cantidad",
+        "price": "Precio"
+      },
+      "moreRows": "+{count} fila más",
+      "moreRows_plural": "+{count} filas más",
+      "importComplete": "Importación completada",
+      "resultImported": "{count} importados",
+      "resultSkipped": "{count} omitidos",
+      "resultFailed": "{count} fallidos",
+      "cancel": "Cancelar",
+      "close": "Cerrar",
+      "importBtn": "Importar ({count})",
+      "toastNoValidRows": "No se encontraron filas válidas en el archivo.",
+      "toastMissingBrand": "La columna 'marque' (o 'brand') es obligatoria en el CSV.",
+      "toastMissingTitle": "La columna 'titre' (o 'title') es obligatoria en el CSV.",
+      "toastImported": "{count} producto(s) importado(s).",
+      "toastSkipped": "{count} fila(s) omitida(s) (duplicados).",
+      "toastFailed": "{count} fila(s) con error."
+    }
   }
 }

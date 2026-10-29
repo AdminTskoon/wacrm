@@ -106,7 +106,7 @@ const navItems: NavItem[] = [
   { href: "/produits", labelKey: "produits", icon: Package },
   { href: "/commandes", labelKey: "commandes", icon: ShoppingCart },
   { href: "/services", labelKey: "services", icon: Sparkles },
-  { href: "/reservations", labelKey: "reservations", icon: CalendarClock },
+  { href: "/rendez-vous", labelKey: "reservations", icon: CalendarClock },
 ];
 
 const bottomNavItems = [
